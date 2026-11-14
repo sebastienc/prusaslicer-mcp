@@ -1,17 +1,39 @@
 """Unit tests for printer display-name cleanup (no PrusaSlicer needed)."""
 
+import pytest
+
 from prusaslicer_mcp.server import _display_name
 
 
-def test_collapses_wx_escaped_ampersand():
-    # The vendor bundle stores model names GUI-escaped: "&&" renders as a literal "&".
-    assert _display_name("Original Prusa MINI && MINI+ Input Shaper") == "Original Prusa MINI & MINI+ Input Shaper"
+@pytest.mark.parametrize(
+    ("stored", "shown"),
+    [
+        # The vendor bundle stores model names GUI-escaped: "&&" renders as a literal "&".
+        ("Original Prusa MINI && MINI+ Input Shaper", "Original Prusa MINI & MINI+ Input Shaper"),
+        ("A && B && C", "A & B & C"),
+    ],
+    ids=["wx-escaped-ampersand", "every-occurrence"],
+)
+def test_wx_escaped_ampersand_is_unescaped(stored, shown):
+    # Given a model name as stored in the vendor bundle
+
+    # When it is prepared for display
+    result = _display_name(stored)
+
+    # Then each "&&" has become a single "&"
+    assert result == shown
 
 
-def test_collapses_every_occurrence():
-    assert _display_name("A && B && C") == "A & B & C"
+@pytest.mark.parametrize(
+    "name",
+    ["Original Prusa MINI & MINI+", "Original Prusa MK4S"],
+    ids=["single-ampersand", "plain-name"],
+)
+def test_name_without_a_doubled_ampersand_is_unchanged(name):
+    # Given a name with no "&&" in it
 
+    # When it is prepared for display
+    result = _display_name(name)
 
-def test_leaves_single_ampersand_and_plain_names_alone():
-    assert _display_name("Original Prusa MINI & MINI+") == "Original Prusa MINI & MINI+"
-    assert _display_name("Original Prusa MK4S") == "Original Prusa MK4S"
+    # Then it comes back exactly as it was
+    assert result == name

@@ -41,7 +41,7 @@ Every test is written as **Given / When / Then** (the same shape as a BDD scenar
       assert args[args.index("--center") + 1] == "90,90"
   ```
 
-- Tests written before this rule are being migrated (see `ROADMAP.md`). When you touch an old test for any reason, convert it to this shape in the same change.
+- Every test in `tests/` follows this shape. Keep it that way: a test without `# Given` / `# When` / `# Then` is unfinished.
 
 ## Practicalities
 

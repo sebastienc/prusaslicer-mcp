@@ -27,61 +27,100 @@ def model(tmp_path):
 
 
 async def tool_error(name: str, arguments: dict) -> str:
-    """Call a tool the way a client does and return the message the client would see."""
+    """Call a tool the way a client does and return the message the client would see.
+
+    It also fails the test if the error is a crash, whose text the SDK withholds from the client.
+    """
     with pytest.raises(ToolError) as exc:
         await server.mcp.call_tool(name, arguments)
     assert not isinstance(exc.value, UnexpectedToolError), f"crash, message withheld from client: {exc.value}"
     return str(exc.value)
 
 
-async def test_bad_technology_is_readable():
-    assert "technology must be 'FFF' or 'SLA'" in await tool_error("list_printers", {"technology": "X"})
+def slice_arguments(model, **extra) -> dict:
+    return {"model_path": str(model), "printer_profile": "p", "print_profile": "q", "material_profile": "m", **extra}
 
 
-async def test_missing_model_is_readable(tmp_path):
-    assert "Model file not found" in await tool_error("inspect_model", {"model_path": str(tmp_path / "nope.stl")})
+def slicer_says(monkeypatch, stderr: str, returncode: int = 0) -> None:
+    """Fake the CLI so PrusaSlicer exits with this stderr."""
 
-
-async def test_bad_override_key_is_readable(fake_config, model):
-    msg = await tool_error(
-        "slice_model",
-        {"model_path": str(model), "printer_profile": "p", "print_profile": "q", "material_profile": "m",
-         "overrides": {"bad key; rm": "1"}},
-    )
-    assert "Invalid override key" in msg
-
-
-async def test_slicer_failure_text_reaches_client(fake_config, model, monkeypatch):
     async def fake_run(config, args, timeout=None):
-        return cli.CliResult(0, "", "All objects are outside of the print volume.")
+        return cli.CliResult(returncode, "", stderr)
 
     monkeypatch.setattr(cli, "run", fake_run)
-    msg = await tool_error(
-        "slice_model",
-        {"model_path": str(model), "printer_profile": "p", "print_profile": "q", "material_profile": "m"},
-    )
-    assert "All objects are outside of the print volume." in msg
 
 
-async def test_timeout_is_readable(fake_config, model, monkeypatch):
+async def test_unsupported_technology_error_is_readable():
+    # Given a technology that is neither FFF nor SLA
+    arguments = {"technology": "X"}
+
+    # When list_printers is called
+    message = await tool_error("list_printers", arguments)
+
+    # Then the client can read what was wrong
+    assert "technology must be 'FFF' or 'SLA'" in message
+
+
+async def test_missing_model_error_is_readable(tmp_path):
+    # Given a model path that does not exist
+    arguments = {"model_path": str(tmp_path / "nope.stl")}
+
+    # When inspect_model is called
+    message = await tool_error("inspect_model", arguments)
+
+    # Then the client can read that the file was not found
+    assert "Model file not found" in message
+
+
+async def test_invalid_override_key_error_is_readable(fake_config, model):
+    # Given an override key that is not a valid option name
+    arguments = slice_arguments(model, overrides={"bad key; rm": "1"})
+
+    # When slice_model is called
+    message = await tool_error("slice_model", arguments)
+
+    # Then the client can read which part was invalid
+    assert "Invalid override key" in message
+
+
+async def test_slicer_failure_text_reaches_the_client(fake_config, model, monkeypatch):
+    # Given PrusaSlicer refuses the model with its own explanation
+    slicer_says(monkeypatch, "All objects are outside of the print volume.")
+
+    # When slice_model is called
+    message = await tool_error("slice_model", slice_arguments(model))
+
+    # Then PrusaSlicer's explanation is in the message the client sees
+    assert "All objects are outside of the print volume." in message
+
+
+async def test_timeout_error_is_readable(fake_config, model, monkeypatch):
+    # Given PrusaSlicer runs past the configured timeout
     async def fake_run(config, args, timeout=None):
         raise cli.CliTimeout("PrusaSlicer did not finish within 5s")
 
     monkeypatch.setattr(cli, "run", fake_run)
-    msg = await tool_error(
-        "slice_model",
-        {"model_path": str(model), "printer_profile": "p", "print_profile": "q", "material_profile": "m"},
-    )
-    assert "did not finish within 5s" in msg
+
+    # When slice_model is called
+    message = await tool_error("slice_model", slice_arguments(model))
+
+    # Then the client can read that it timed out
+    assert "did not finish within 5s" in message
 
 
-async def test_missing_prusaslicer_is_readable(monkeypatch):
+async def test_missing_prusaslicer_error_tells_how_to_configure_it(monkeypatch):
+    # Given no PrusaSlicer executable can be found
     def boom():
         raise PrusaSlicerNotFound("PrusaSlicer not found. Install it or set PRUSASLICER_PATH to the executable.")
 
     monkeypatch.setattr(server, "_config", None)
     monkeypatch.setattr(server, "load_config", boom)
-    assert "PRUSASLICER_PATH" in await tool_error("list_printers", {})
+
+    # When any tool that needs it is called
+    message = await tool_error("list_printers", {})
+
+    # Then the client is told which setting fixes it
+    assert "PRUSASLICER_PATH" in message
 
 
 @pytest.mark.parametrize(
@@ -95,16 +134,10 @@ async def test_missing_prusaslicer_is_readable(monkeypatch):
 )
 async def test_unknown_profile_error_points_at_the_listing_tools(fake_config, model, monkeypatch, slicer_message):
     # Given PrusaSlicer cannot find one of the profile names it was given
-    async def fake_run(config, args, timeout=None):
-        return cli.CliResult(1, "", slicer_message)
-
-    monkeypatch.setattr(cli, "run", fake_run)
+    slicer_says(monkeypatch, slicer_message, returncode=1)
 
     # When the model is sliced
-    msg = await tool_error(
-        "slice_model",
-        {"model_path": str(model), "printer_profile": "p", "print_profile": "q", "material_profile": "m"},
-    )
+    msg = await tool_error("slice_model", slice_arguments(model))
 
     # Then the slicer's own text is kept and the caller is told where the exact names come from
     assert "wasn't found" in msg
@@ -113,16 +146,10 @@ async def test_unknown_profile_error_points_at_the_listing_tools(fake_config, mo
 
 async def test_unrelated_slicer_error_gets_no_profile_hint(fake_config, model, monkeypatch):
     # Given PrusaSlicer fails for a reason that has nothing to do with profile names
-    async def fake_run(config, args, timeout=None):
-        return cli.CliResult(1, "", "Unknown option --fill-densty")
-
-    monkeypatch.setattr(cli, "run", fake_run)
+    slicer_says(monkeypatch, "Unknown option --fill-densty", returncode=1)
 
     # When the model is sliced
-    msg = await tool_error(
-        "slice_model",
-        {"model_path": str(model), "printer_profile": "p", "print_profile": "q", "material_profile": "m"},
-    )
+    msg = await tool_error("slice_model", slice_arguments(model))
 
     # Then the message is the slicer's text without a misleading profile hint
     assert "Unknown option --fill-densty" in msg

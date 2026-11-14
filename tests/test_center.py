@@ -71,30 +71,58 @@ def slice_args(model, printer="Mini", **extra):
     return {"model_path": str(model), "printer_profile": printer, "print_profile": "q", "material_profile": "m", **extra}
 
 
-async def test_center_uses_the_middle_of_the_bed(slicer, model):
-    await server.mcp.call_tool("slice_model", slice_args(model, center=True))
+def centre_passed_to_prusaslicer(slicer) -> str:
     args = slicer.calls[0]
-    assert args[args.index("--center") + 1] == "90,90"
+    return args[args.index("--center") + 1]
 
 
-async def test_center_follows_bed_size(slicer, model):
-    await server.mcp.call_tool("slice_model", slice_args(model, printer="MK3S", center=True))
-    args = slicer.calls[0]
-    assert args[args.index("--center") + 1] == "125,105"
+async def test_center_uses_the_middle_of_a_180_mm_bed(slicer, model):
+    # Given a printer profile whose bed is 180 x 180 mm and a model file
+    arguments = slice_args(model, printer="Mini", center=True)
+
+    # When the model is sliced with center on
+    await server.mcp.call_tool("slice_model", arguments)
+
+    # Then PrusaSlicer is told to centre on 90,90
+    assert centre_passed_to_prusaslicer(slicer) == "90,90"
 
 
-async def test_default_does_not_move_the_model(slicer, model):
-    await server.mcp.call_tool("slice_model", slice_args(model))
+async def test_center_follows_the_bed_size_of_the_printer_profile(slicer, model):
+    # Given a printer profile whose bed is 250 x 210 mm
+    arguments = slice_args(model, printer="MK3S", center=True)
+
+    # When the model is sliced with center on
+    await server.mcp.call_tool("slice_model", arguments)
+
+    # Then PrusaSlicer is told to centre on 125,105
+    assert centre_passed_to_prusaslicer(slicer) == "125,105"
+
+
+async def test_model_is_not_moved_unless_center_is_requested(slicer, model):
+    # Given a model file and no center option
+    arguments = slice_args(model)
+
+    # When the model is sliced
+    await server.mcp.call_tool("slice_model", arguments)
+
+    # Then no --center flag reaches PrusaSlicer
     assert "--center" not in slicer.calls[0]
 
 
-async def test_center_with_unknown_printer_profile_is_readable(slicer, model):
+async def test_center_with_an_unknown_printer_profile_is_refused_before_slicing(slicer, model):
+    # Given a printer profile that is not among the installed ones
+    arguments = slice_args(model, printer="Nope", center=True)
+
+    # When / Then slicing is refused naming the profile, and PrusaSlicer is never asked to slice
     with pytest.raises(ToolError, match="Nope"):
-        await server.mcp.call_tool("slice_model", slice_args(model, printer="Nope", center=True))
+        await server.mcp.call_tool("slice_model", arguments)
     assert slicer.calls == []
 
 
-async def test_outside_print_volume_suggests_center(slicer, model):
+async def test_outside_print_volume_failure_suggests_center(slicer, model):
+    # Given PrusaSlicer reports that the model is off the bed
     slicer.state["stderr"] = "All objects are outside of the print volume."
+
+    # When / Then slicing without center fails with the remedy in the message
     with pytest.raises(ToolError, match="center=true"):
         await server.mcp.call_tool("slice_model", slice_args(model))
