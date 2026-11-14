@@ -5,7 +5,20 @@ An [MCP](https://modelcontextprotocol.io) server that lets Claude (or any MCP cl
 slice it headlessly with your real presets, and get print time and filament use back.
 
 It runs PrusaSlicer as a separate process, so it works while the GUI is open and does not touch it.
-It does **not** control the GUI itself (PrusaSlicer 2.9.x has no remote-control API).
+It does **not** control the GUI itself (PrusaSlicer 2.9.x has no remote-control API), and it targets
+**2.9.x only**; PrusaSlicer 3.x is not supported yet.
+
+**Status:** v0.1.0, early. Four tools, tested against PrusaSlicer 2.9.7 on macOS. See the [roadmap](ROADMAP.md).
+
+## Example
+
+Once registered with an MCP client, you can ask things like:
+
+> "Which printers do I have installed? Check `~/models/bracket.stl` and slice it on the MINI with
+> Prusament PLA at 0.20mm, 25% infill. How long will it take and how much filament does it use?"
+
+Behind that, the client calls `list_printers` → `list_profiles` → `inspect_model` → `slice_model` and
+reads back the print time and filament use.
 
 ## Tools
 
@@ -30,6 +43,8 @@ direnv allow             # optional: loads .env into your shell
 uv run pytest            # integration tests are skipped if PrusaSlicer isn't found
 ```
 
+In VS Code, open `prusaslicer-mcp.code-workspace` (interpreter, pytest, tasks, debug configs and recommended extensions are preconfigured).
+
 ### Configuration (`.env`)
 
 | Variable | Purpose | Default |
@@ -47,10 +62,27 @@ claude mcp add prusaslicer \
   -- uv --directory /path/to/prusaslicer-mcp run prusaslicer-mcp
 ```
 
+`PRUSASLICER_PATH` is only needed when auto-detection fails (e.g. a nonstandard install folder; quote
+paths containing spaces). `claude mcp list` should then show `prusaslicer`. Other MCP clients need the same
+command and an `env` block.
+
 ## Notes
 
 - `--query-*` actions exit with status 1 on success in 2.9.7; the server judges them by their output file.
 - Setting overrides use PrusaSlicer config option names, e.g. `{"fill_density": "25%"}` (see `PrusaSlicer --help-fff`).
+
+## Limitations
+
+- No live GUI control: each call runs a separate PrusaSlicer process and cannot see what is open in the GUI.
+- Output is always text G-code, even where the profile prefers binary (`.bgcode`).
+- FFF (filament) slicing only; single material; no transform options yet. See the [roadmap](ROADMAP.md).
+
+## Documentation
+
+- [Roadmap](ROADMAP.md): what's planned
+- [Architecture](docs/architecture/README.md): how the server works
+- [Decision records](docs/decisions/README.md): why it works that way (MADR)
+- [`CLAUDE.md`](CLAUDE.md) and `.claude/rules/`: conventions for Claude Code sessions in this repo
 
 ## License
 
