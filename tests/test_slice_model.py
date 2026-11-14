@@ -778,3 +778,67 @@ async def test_the_model_stays_last_on_the_command_line_whatever_transforms_are_
     assert args[-1] == str(model.resolve())
     for flag in ("--rotate-x", "--rotate-y", "--rotate", "--scale", "--split", "--duplicate"):
         assert args.index(flag) < len(args) - 3
+
+
+# --------------------------------------------------------------------------- an old file must never pass for a new slice
+
+
+def leftovers(folder) -> list[str]:
+    return sorted(p.name for p in folder.iterdir())
+
+
+async def test_a_refused_slice_is_not_mistaken_for_success_because_an_old_file_is_there(fake_prusaslicer, model):
+    # Given a G-code file left at the output path by an earlier slice, and PrusaSlicer now refusing with exit code 0
+    # (which it does for "outside of the print volume" and similar) without writing anything
+    fake_prusaslicer.out_dir.mkdir()
+    old = fake_prusaslicer.out_dir / "part.gcode"
+    old.write_bytes(FOOTER.encode())
+    fake_prusaslicer.state.writes_output = False
+    fake_prusaslicer.state.returncode = 0
+    fake_prusaslicer.state.stdout = "All objects are outside of the print volume."
+
+    # When / Then the slice is reported as failed, with PrusaSlicer's reason
+    with pytest.raises(ToolError, match="outside of the print volume"):
+        await slice_it(model)
+
+    # And the earlier file is left exactly as it was
+    assert old.read_bytes() == FOOTER.encode()
+
+
+async def test_a_successful_slice_replaces_an_older_file_at_the_output_path(fake_prusaslicer, model):
+    # Given an old G-code file at the output path, and a new slice with different statistics
+    fake_prusaslicer.out_dir.mkdir()
+    old = fake_prusaslicer.out_dir / "part.gcode"
+    old.write_text("; old file\n; estimated printing time (normal mode) = 9h 9m 9s\n")
+    fake_prusaslicer.state.gcode = FOOTER.encode()
+
+    # When the model is sliced
+    result = await slice_it(model)
+
+    # Then the file now holds the new slice and the result reports the new statistics
+    assert old.read_bytes() == FOOTER.encode()
+    assert result.stats.estimated_time == "12m 5s"
+
+
+async def test_no_working_files_are_left_in_the_output_folder_after_a_slice(fake_prusaslicer, model):
+    # Given a fresh output folder
+
+    # When a slice succeeds
+    await slice_it(model)
+
+    # Then the folder holds the G-code and nothing else
+    assert leftovers(fake_prusaslicer.out_dir) == ["part.gcode"]
+
+
+async def test_no_working_files_are_left_in_the_output_folder_after_a_failure(fake_prusaslicer, model):
+    # Given a slice that fails
+    fake_prusaslicer.state.returncode = 1
+    fake_prusaslicer.state.writes_output = False
+    fake_prusaslicer.state.stderr = "boom"
+
+    # When it is attempted
+    with pytest.raises(ToolError):
+        await slice_it(model)
+
+    # Then the output folder holds nothing
+    assert leftovers(fake_prusaslicer.out_dir) == []
