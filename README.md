@@ -26,10 +26,12 @@ reads back the print time and filament use.
 |---|---|
 | `list_printers` | Installed printer models, exact printer profile names, nozzle variants, bed sizes |
 | `list_profiles` | Print (quality) profiles and compatible filament profiles for a printer profile |
-| `inspect_model` | Size, volume, watertightness, part count; optional build-volume fit check (via `trimesh`), and a warning when a 3MF's stored position is off the bed |
-| `slice_model` | Slice with `printer_profile` / `print_profile` / `material_profile`, optional setting overrides and `center`; returns G-code path, time, filament, cost, layers |
+| `inspect_model` | Size, volume, watertightness, part count; optional build-volume fit check (via `trimesh`), a warning when a 3MF's stored position is off the bed, and, for a 3MF saved from PrusaSlicer, the profiles and key settings (infill, brim, supports) stored in it |
+| `slice_model` | Slice with `printer_profile` / `print_profile` / `material_profile` (all three, or none for a PrusaSlicer project, which then keeps its own saved settings), optional setting overrides and `center`; returns G-code path, time, filament, cost, layers, and whether the project's or the profiles' settings were used |
 
 Profile names must match exactly; use `list_printers` and `list_profiles` to discover them.
+
+**Projects.** A 3MF saved from PrusaSlicer carries its own settings (supports, brim, infill...). Slice it with no profiles to keep them; passing profiles makes PrusaSlicer ignore them and use the plain profile values ([ADR 0007](docs/decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md)). `inspect_model` shows what a project saves.
 G-code is always written as text (`--binary-gcode=0`) so statistics can be read back.
 
 ## Setup

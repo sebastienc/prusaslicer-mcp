@@ -12,6 +12,7 @@ When an item ships, move it to **Done** and update the README and architecture d
 - `slice_model(center=true)` for plain 3MF files that sit off the bed
 - Project scaffolding: uv, direnv/`.env`, tests, Claude rules, MADR decisions, architecture doc, VS Code workspace
 - TDD as the default workflow, and Given/When/Then as the test style, both written down in `.claude/rules/testing.md`; every existing test migrated to that shape
+- PrusaSlicer projects keep their own settings: profiles are optional for a saved project, `inspect_model` reports what it stores, and the result says which settings applied ([ADR 0007](docs/decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md))
 - Test gaps filled and mutation-checked: coverage 84% to 99% (line+branch), only `main()` uncovered (an automated stdio test is in Quality gates). The new tests exposed and fixed six problems: an opaque crash on an invalid `PRUSASLICER_MCP_TIMEOUT`, an opaque crash on a corrupt 3MF/STEP/AMF, overrides that could undo server guarantees (`binary_gcode=1`, `save`), folders created for refused requests, a made-up `0` seconds for an unrecognised print time, and a whole G-code file read into memory to check four bytes
 
 ## Next

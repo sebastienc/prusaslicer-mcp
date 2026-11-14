@@ -6,7 +6,7 @@ import json
 import re
 import tempfile
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from . import cli
 from .config import Config, ConfigError, load_config
 from .gcode import GcodeStats, parse_gcode_stats
+from .project import ProjectInfo, read_project
 
 mcp = MCPServer(
     "prusaslicer",
@@ -195,6 +196,7 @@ class ModelInfo(BaseModel):
     watertight: bool
     connected_parts: int
     fits_bed: bool | None = None
+    project: ProjectInfo | None = None
     warnings: list[str]
 
 
@@ -255,6 +257,7 @@ def inspect_model(
         watertight=bool(mesh.is_watertight),
         connected_parts=parts,
         fits_bed=fits,
+        project=read_project(path),
         warnings=warnings,
     )
 
@@ -265,15 +268,23 @@ def inspect_model(
 class SliceResult(BaseModel):
     gcode_path: str
     stats: GcodeStats
+    settings_from: Literal["profiles", "project"]
     warnings: list[str]
 
 
 @mcp.tool()
 async def slice_model(
     model_path: Annotated[str, Field(description="Absolute path to an STL/3MF/OBJ file")],
-    printer_profile: Annotated[str, Field(description="Exact printer profile name, from list_printers")],
-    print_profile: Annotated[str, Field(description="Exact print profile name, from list_profiles")],
-    material_profile: Annotated[str, Field(description="Exact filament profile name, from list_profiles")],
+    printer_profile: Annotated[
+        str | None,
+        Field(
+            description="Exact printer profile name, from list_printers. Give all three profiles, or none for a PrusaSlicer "
+            "project (a .3mf saved from PrusaSlicer, see inspect_model's `project`), which is then sliced with its own saved "
+            "settings (supports, brim, infill...). Giving profiles makes PrusaSlicer ignore those saved settings."
+        ),
+    ] = None,
+    print_profile: Annotated[str | None, Field(description="Exact print profile name, from list_profiles. All three profiles or none.")] = None,
+    material_profile: Annotated[str | None, Field(description="Exact filament profile name, from list_profiles. All three profiles or none.")] = None,
     overrides: Annotated[
         dict[str, str] | None,
         Field(description="Optional PrusaSlicer settings, e.g. {'fill_density': '25%', 'perimeters': '3'}. Keys are config option names (see PrusaSlicer --help-fff); options the server sets itself (profiles, output, binary_gcode, datadir, save) are rejected."),
@@ -288,20 +299,27 @@ async def slice_model(
         ),
     ] = False,
 ) -> SliceResult:
-    """Slice a model headlessly using installed PrusaSlicer profiles and return the G-code path
-    plus print time, filament use and layer count. G-code is always written as text (not .bgcode)."""
+    """Slice a model headlessly and return the G-code path plus print time, filament use and layer count.
+    Uses the given installed profiles, or, for a PrusaSlicer project 3MF with no profiles given, the settings
+    saved in the project. G-code is always written as text (not .bgcode)."""
     cfg = get_config()
     model = _model_path(model_path)
+    project = read_project(model)
+    profiles = (printer_profile, print_profile, material_profile)
+    if all(p is None for p in profiles):
+        if project is None:
+            raise ToolError(
+                "printer_profile, print_profile and material_profile are required unless the model is a PrusaSlicer "
+                "project (a .3mf saved from PrusaSlicer), which is sliced with its own settings"
+            )
+    elif any(p is None for p in profiles):
+        raise ToolError("Give all three profiles (printer_profile, print_profile, material_profile) or none")
 
     out = Path(output_path).expanduser().resolve() if output_path else cfg.output_dir / f"{model.stem}.gcode"
 
-    args = [
-        "--export-gcode",
-        "--binary-gcode=0",
-        "--printer-profile", printer_profile,
-        "--print-profile", print_profile,
-        "--material-profile", material_profile,
-    ]
+    args = ["--export-gcode", "--binary-gcode=0"]
+    if printer_profile is not None:
+        args += ["--printer-profile", printer_profile, "--print-profile", print_profile, "--material-profile", material_profile]
     for key, value in (overrides or {}).items():
         if not _OVERRIDE_KEY.match(key):
             raise ToolError(f"Invalid override key: {key!r}")
@@ -311,7 +329,10 @@ async def slice_model(
             raise ToolError(f"Invalid override value for {key!r}")
         args.append(f"--{key.replace('_', '-')}={value}")
     if center:
-        x, y = await _bed_center(printer_profile)
+        bed_printer = printer_profile if printer_profile is not None else (project.printer_profile if project else None)
+        if bed_printer is None:
+            raise ToolError("Cannot centre on the bed: the project does not name its printer, so pass printer_profile")
+        x, y = await _bed_center(bed_printer)
         args += ["--center", f"{x:g},{y:g}"]
     args += ["--output", str(out), str(model)]
 
@@ -329,7 +350,9 @@ async def slice_model(
         stats = parse_gcode_stats(out)
     except ValueError as e:
         raise ToolError(str(e)) from e
-    return SliceResult(gcode_path=str(out), stats=stats, warnings=warnings)
+    return SliceResult(
+        gcode_path=str(out), stats=stats, settings_from="profiles" if printer_profile is not None else "project", warnings=warnings
+    )
 
 
 def main() -> None:

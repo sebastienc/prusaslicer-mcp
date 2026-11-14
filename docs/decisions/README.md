@@ -13,3 +13,4 @@ ADRs are append-only history: to change a decision, write a new ADR and mark the
 | [0004](0004-build-our-own-server.md) | Build our own server instead of adopting PrusaMCP | accepted |
 | [0005](0005-always-slice-to-text-gcode.md) | Always slice to text G-code | accepted |
 | [0006](0006-configuration-via-environment-and-direnv.md) | Configure through environment variables loaded by direnv | accepted |
+| [0007](0007-slice-prusaslicer-projects-with-their-own-settings.md) | Slice PrusaSlicer projects with their own settings | accepted |

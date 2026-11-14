@@ -1,5 +1,6 @@
 """Integration tests against a real PrusaSlicer install (skipped when absent)."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -7,6 +8,8 @@ import trimesh
 from mcp.server.mcpserver.exceptions import ToolError
 
 from prusaslicer_mcp import server
+
+from conftest import PROJECT_CONFIG
 
 
 @pytest.fixture(autouse=True)
@@ -126,3 +129,36 @@ async def test_slice_places_a_plain_3mf_around_the_origin_when_centered(origin_c
 
     # Then it slices
     assert result.stats.layer_count
+
+
+def recorded_setting(result, key: str) -> str:
+    """The value PrusaSlicer wrote for `key` in the config dump at the end of the G-code."""
+    for line in reversed(Path(result.gcode_path).read_text().splitlines()):
+        if line.startswith(f"; {key} = "):
+            return line.split(" = ", 1)[1]
+    raise AssertionError(f"{key} not found in the G-code")
+
+
+async def test_slice_applies_a_projects_saved_settings_when_no_profiles_are_given(make_3mf):
+    # Given a project 3MF that saves a 5 mm brim and supports
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced without profiles
+    result = await server.slice_model(str(project))
+
+    # Then PrusaSlicer recorded the project's settings in the G-code
+    assert result.settings_from == "project"
+    assert recorded_setting(result, "brim_width") == "5"
+    assert recorded_setting(result, "support_material") == "1"
+
+
+async def test_slice_with_profiles_ignores_a_projects_saved_settings(make_3mf, installed):
+    # Given the same project, and an installed print profile that sets no brim
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced with profiles
+    result = await server.slice_model(str(project), installed.printer, installed.print_profile, installed.filament)
+
+    # Then the profile's values win over the project's saved brim
+    assert result.settings_from == "profiles"
+    assert recorded_setting(result, "brim_width") != "5"

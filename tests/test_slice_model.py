@@ -4,6 +4,7 @@ Only `cli.run` is faked, so argument building, validation, output paths, warning
 failure reporting are the real code under test.
 """
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +14,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 from prusaslicer_mcp import cli, server
 from prusaslicer_mcp.config import Config
 
+from conftest import PROJECT_CONFIG
+
 FOOTER = """;LAYER_CHANGE
 ; filament used [mm] = 100.5
 ; total filament used [g] = 0.31
@@ -20,6 +23,16 @@ FOOTER = """;LAYER_CHANGE
 """
 
 PROFILES = ("Mini", "0.20mm SPEED", "PLA")
+NO_PROFILES = (None, None, None)
+PROFILE_FLAGS = ("--printer-profile", "--print-profile", "--material-profile")
+MK3S = "Original Prusa i3 MK3S & MK3S+ MMU2S Single"
+PRINTERS = {
+    "printer_models": [
+        {"id": "MK3S", "name": "MK3S", "variants": [
+            {"name": 0.4, "printer_profiles": [{"name": MK3S, "bed": {"width": 250, "height": 210, "max_print_height": 210}}]}
+        ]}
+    ]
+}
 
 
 @pytest.fixture
@@ -32,6 +45,9 @@ def prusaslicer(tmp_path, monkeypatch):
     state = SimpleNamespace(gcode=FOOTER.encode(), writes_output=True, returncode=0, stdout="", stderr="")
 
     async def fake_run(config, args, timeout=None):
+        if "--query-printer-models" in args:
+            Path(args[args.index("-o") + 1]).write_text(json.dumps(PRINTERS))
+            return cli.CliResult(1, "", "")
         calls.append(args)
         if state.writes_output:
             Path(args[args.index("--output") + 1]).write_bytes(state.gcode)
@@ -48,8 +64,8 @@ def model(tmp_path):
     return path
 
 
-async def slice_it(model, **extra):
-    return await server.slice_model(str(model), *PROFILES, **extra)
+async def slice_it(model, profiles=PROFILES, **extra):
+    return await server.slice_model(str(model), *profiles, **extra)
 
 
 # --------------------------------------------------------------------------- the command line
@@ -176,8 +192,14 @@ async def test_tilde_in_output_path_is_expanded(prusaslicer, model, monkeypatch)
 
 @pytest.mark.parametrize(
     "extra",
-    [{"overrides": {"Bad": "1"}}, {"overrides": {"binary_gcode": "1"}}, {"overrides": {"a": "x\ny"}}],
-    ids=["bad-key", "reserved-key", "bad-value"],
+    [
+        {"overrides": {"Bad": "1"}},
+        {"overrides": {"binary_gcode": "1"}},
+        {"overrides": {"a": "x\ny"}},
+        {"profiles": NO_PROFILES},
+        {"profiles": ("Mini", None, None)},
+    ],
+    ids=["bad-key", "reserved-key", "bad-value", "no-profiles-for-an-stl", "partial-profiles"],
 )
 async def test_a_refused_request_creates_no_folders(prusaslicer, model, extra):
     # Given a request that will be refused, with an output path in folders that do not exist
@@ -276,3 +298,116 @@ async def test_binary_gcode_output_is_reported_as_a_readable_failure(prusaslicer
     # When / Then the statistics cannot be read, and the tool says why
     with pytest.raises(ToolError, match="Binary G-code"):
         await slice_it(model)
+
+
+# --------------------------------------------------------------------------- PrusaSlicer projects (ADR 0007)
+
+
+async def test_a_project_is_sliced_with_its_own_settings_when_no_profiles_are_given(prusaslicer, make_3mf):
+    # Given a 3MF saved from PrusaSlicer, with its own settings embedded
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced without profiles
+    result = await slice_it(project, profiles=NO_PROFILES)
+
+    # Then PrusaSlicer is given no profile flags, so the project's settings apply, and text G-code is still forced
+    args = prusaslicer.calls[0]
+    assert not any(flag in args for flag in PROFILE_FLAGS)
+    assert args[:2] == ["--export-gcode", "--binary-gcode=0"]
+    assert result.settings_from == "project"
+
+
+async def test_profiles_given_for_a_project_replace_its_settings(prusaslicer, make_3mf):
+    # Given a project and explicit profiles
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced with them
+    result = await slice_it(project)
+
+    # Then the profile flags are passed, which makes PrusaSlicer use the profiles and not the project's settings
+    args = prusaslicer.calls[0]
+    assert all(flag in args for flag in PROFILE_FLAGS)
+    assert result.settings_from == "profiles"
+
+
+async def test_a_model_that_is_not_a_project_reports_that_profiles_were_used(prusaslicer, model):
+    # Given an STL and profiles
+
+    # When it is sliced
+    result = await slice_it(model)
+
+    # Then the result says profiles were used
+    assert result.settings_from == "profiles"
+
+
+async def test_overrides_still_apply_on_top_of_a_projects_own_settings(prusaslicer, make_3mf):
+    # Given a project sliced without profiles, with one override
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced
+    await slice_it(project, profiles=NO_PROFILES, overrides={"fill_density": "10%"})
+
+    # Then the override is passed, and no profile flags are
+    args = prusaslicer.calls[0]
+    assert "--fill-density=10%" in args
+    assert not any(flag in args for flag in PROFILE_FLAGS)
+
+
+async def test_centring_a_project_uses_the_bed_of_the_printer_stored_in_it(prusaslicer, make_3mf):
+    # Given a project that names a 250 x 210 mm printer, and no printer_profile argument
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced without profiles but centred
+    await slice_it(project, profiles=NO_PROFILES, center=True)
+
+    # Then PrusaSlicer is told to centre on that bed's middle
+    args = prusaslicer.calls[0]
+    assert args[args.index("--center") + 1] == "125,105"
+
+
+async def test_centring_a_project_that_does_not_name_its_printer_asks_for_one(prusaslicer, make_3mf):
+    # Given a project whose configuration has no printer profile name
+    project = make_3mf(config="; fill_density = 20%\n")
+
+    # When / Then centring it without a printer_profile is refused with advice
+    with pytest.raises(ToolError, match="does not name its printer"):
+        await slice_it(project, profiles=NO_PROFILES, center=True)
+    assert prusaslicer.calls == []
+
+
+@pytest.mark.parametrize("kind", ["stl", "plain-3mf"])
+async def test_a_model_that_is_not_a_project_needs_profiles(prusaslicer, model, make_3mf, kind):
+    # Given a model without embedded PrusaSlicer settings
+    target = model if kind == "stl" else make_3mf(config=None)
+
+    # When / Then slicing it without profiles is refused, saying what is needed
+    with pytest.raises(ToolError, match="required unless the model is a PrusaSlicer project"):
+        await slice_it(target, profiles=NO_PROFILES)
+    assert prusaslicer.calls == []
+
+
+@pytest.mark.parametrize(
+    "profiles",
+    [("Mini", None, None), (None, "0.20mm SPEED", None), (None, None, "PLA"), ("Mini", "0.20mm SPEED", None)],
+    ids=["printer-only", "print-only", "material-only", "no-material"],
+)
+async def test_some_but_not_all_profiles_is_refused_even_for_a_project(prusaslicer, make_3mf, profiles):
+    # Given a project and an incomplete set of profiles
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When / Then slicing is refused, because a partial set would mix profile values with the project's
+    with pytest.raises(ToolError, match="all three"):
+        await slice_it(project, profiles=profiles)
+    assert prusaslicer.calls == []
+
+
+async def test_empty_profile_names_count_as_given_profiles_and_are_left_for_prusaslicer_to_reject(prusaslicer, make_3mf):
+    # Given a project and profile names that are present but empty
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced with them
+    result = await slice_it(project, profiles=("", "", ""))
+
+    # Then they are passed on as profiles (not silently replaced by the project's settings)
+    assert result.settings_from == "profiles"
+    assert prusaslicer.calls[0][prusaslicer.calls[0].index("--printer-profile") + 1] == ""

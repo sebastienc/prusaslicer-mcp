@@ -6,6 +6,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from prusaslicer_mcp import server
 
+from conftest import PROJECT_CONFIG
+
 BED = {"bed_width": 180, "bed_depth": 180, "max_height": 180}
 
 
@@ -226,3 +228,33 @@ def test_an_unreadable_model_of_any_supported_type_fails_readably(tmp_path, suff
     # When / Then the tool fails with a message the client can read, not an opaque crash
     with pytest.raises(ToolError, match="Could not"):
         server.inspect_model(str(model))
+
+
+# --------------------------------------------------------------------------- PrusaSlicer projects
+
+
+def test_a_project_3mf_reports_the_profiles_and_settings_saved_in_it(make_3mf):
+    # Given a 3MF saved from PrusaSlicer with supports and a brim switched on
+    model = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is inspected
+    info = server.inspect_model(str(model))
+
+    # Then the stored profile names and the settings that shape a print are reported
+    assert info.project.printer_profile == "Original Prusa i3 MK3S & MK3S+ MMU2S Single"
+    assert info.project.print_profile == "0.20mm QUALITY @MK3"
+    assert info.project.material_profile == "Prusament PLA"
+    assert info.project.settings["support_material"] == "1"
+    assert info.project.settings["brim_width"] == "5"
+
+
+@pytest.mark.parametrize("kind", ["plain-3mf", "stl"])
+def test_a_model_that_is_not_a_project_reports_no_project(make_3mf, tmp_path, kind):
+    # Given a plain 3MF, or an STL
+    model = make_3mf(config=None) if kind == "plain-3mf" else save(cube(), tmp_path / "cube.stl")
+
+    # When it is inspected
+    info = server.inspect_model(str(model))
+
+    # Then no project settings are reported
+    assert info.project is None

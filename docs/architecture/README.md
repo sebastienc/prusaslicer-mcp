@@ -35,6 +35,7 @@ src/prusaslicer_mcp/
   cli.py        run(): async subprocess wrapper around the PrusaSlicer binary
   config.py     executable + datadir discovery, env-var configuration
   gcode.py      parse print statistics from text G-code
+  project.py    read the profiles and key settings stored in a PrusaSlicer project 3MF
 tests/
   conftest.py       prusaslicer fixture (skips if not installed), cube_stl fixture
   test_gcode.py     parser unit tests (no PrusaSlicer needed)
@@ -46,6 +47,7 @@ tests/
 | `config.py` | Resolve `Config(executable, datadir, output_dir, timeout)` from env and platform defaults. Raises `ConfigError` (`PrusaSlicerNotFound` is a subclass) for an unusable setting. | stdlib |
 | `cli.py` | `run(config, args, timeout)` → `CliResult(returncode, stdout, stderr)`. Prepends `--datadir` when configured. Kills the process on timeout (`CliTimeout`). | `config` |
 | `gcode.py` | `parse_gcode_stats(path)` → `GcodeStats`. Rejects binary G-code. | pydantic |
+| `project.py` | `read_project(path)` → `ProjectInfo` (stored printer/print/material profile names and `KEY_SETTINGS`) or `None` when the file is not a `.3mf` that embeds `Metadata/Slic3r_PE.config`. | stdlib, pydantic |
 | `server.py` | Tool surface. Validates input, builds CLI args, shapes pydantic results. Lazily loads `Config` on first use (`get_config()`). | all of the above, `trimesh` |
 
 ## Tools
@@ -54,8 +56,8 @@ tests/
 |---|---|---|
 | `list_printers(technology)` | `--query-printer-models --printer-technology {FFF,SLA}` | Flattens model → nozzle variant → printer profile. Read-only. |
 | `list_profiles(printer_profile)` | `--query-print-filament-profiles --printer-profile ...` | Print profiles with compatible filament profiles. Read-only. |
-| `inspect_model(model_path, bed_*, max_height)` | none | `trimesh` load; size, volume (only when watertight), part count, optional fit check. `fits_bed` compares size only (rotation not considered). For a `.3mf` with a bed given it also warns when the stored position is off the bed, since PrusaSlicer keeps a 3MF's coordinates (see Known quirks). Read-only. |
-| `slice_model(model_path, printer_profile, print_profile, material_profile, overrides, output_path, center)` | `--export-gcode --binary-gcode=0 [--center X,Y] ...` | Writes G-code; returns path + `GcodeStats` + warnings. `center=true` looks up the bed size (`_bed_center`, via `--query-printer-models`) and centres on its middle, assuming a corner origin. Not read-only. |
+| `inspect_model(model_path, bed_*, max_height)` | none | `trimesh` load; size, volume (only when watertight), part count, optional fit check, and `project` (see `project.py`) for a 3MF saved from PrusaSlicer. `fits_bed` compares size only (rotation not considered). For a `.3mf` with a bed given it also warns when the stored position is off the bed, since PrusaSlicer keeps a 3MF's coordinates (see Known quirks). Read-only. |
+| `slice_model(model_path, printer_profile?, print_profile?, material_profile?, overrides, output_path, center)` | `--export-gcode --binary-gcode=0 [--printer-profile ... --print-profile ... --material-profile ...] [--center X,Y] ...` | Writes G-code; returns path + `GcodeStats` + `settings_from` (`profiles`/`project`) + warnings. The three profiles are all-or-none; none is allowed only for a PrusaSlicer project, which is then sliced with its own saved settings ([ADR 0007](../decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md)). `center=true` looks up the bed size (`_bed_center`, via `--query-printer-models`, for the given printer profile or the project's own) and centres on its middle, assuming a corner origin. Not read-only. |
 
 Profile names are exact-match; callers get them from `list_printers` / `list_profiles`.
 
@@ -68,9 +70,9 @@ sequenceDiagram
     participant R as cli.run
     participant P as PrusaSlicer
     participant G as gcode.parse_gcode_stats
-    C->>S: model, printer/print/material profile, overrides
-    S->>S: validate model path + suffix; validate override keys/values
-    S->>R: args (--export-gcode --binary-gcode=0 --printer-profile ... --output ...)
+    C->>S: model, [printer/print/material profile], overrides
+    S->>S: validate model path + suffix; profiles all-or-none (none only for a project); validate override keys/values
+    S->>R: args (--export-gcode --binary-gcode=0 [--printer-profile ...] --output ...)
     R->>P: exec (arg list, --datadir, timeout)
     P-->>R: exit code, stdout, stderr; G-code file
     R-->>S: CliResult
@@ -108,6 +110,7 @@ Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `Pru
 
 ## Known quirks (PrusaSlicer 2.9.7)
 
+- **Profile flags override a project's embedded settings.** Passing `--printer-profile`/`--print-profile`/`--material-profile` with a project 3MF makes PrusaSlicer use the plain profile values and ignore what the project saved (supports, brim, infill...). Without the flags it uses the project's own configuration. `slice_model` therefore omits them for a project when none are given ([ADR 0007](../decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md)).
 - `--query-*` actions **exit with status 1 even when they succeed**. `_query_json` therefore checks that the `-o` file exists, is non-empty, and parses, instead of the exit code.
 - Printer *model* names in the vendor bundles are wx-escaped (`&&` renders as `&` in the GUI), while profile names use a single `&` (e.g. `Original Prusa MINI & MINI+ Input Shaper`). `list_printers` unescapes the model `name` for display (`_display_name` in `server.py`); `id` and every `printer_profile` value are passed through untouched. Always pass the `printer_profile` value, not the model name.
 - Recent profiles default to **binary G-code**; we force text output ([ADR 0005](../decisions/0005-always-slice-to-text-gcode.md)).
