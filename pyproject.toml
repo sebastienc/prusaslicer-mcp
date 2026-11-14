@@ -26,6 +26,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "poethepoet>=0.49.0",
+    "pyright>=1.1.414",
     "pytest>=9.2.0",
     "pytest-asyncio>=1.5.0",
     "pytest-cov>=7.1.0",
@@ -64,6 +65,13 @@ ignore = [
     "ASYNC240", # small local pathlib calls inside async tools are not worth a thread hop
 ]
 
+# Two checkers on purpose: `ty` (what `uv check` runs) is pre-1.0 and has missed real errors, pyright is mature
+# (ADR 0010). The interpreter is the one `uv run` puts first on PATH, so no venv is configured here.
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+
 # Task runner: `uv run poe <task>`. uv has no task runner, so Poe only chains uv's own commands and the tools
 # CI also runs; CI calls these same tasks so local and CI checks cannot drift apart.
 [tool.poe.tasks]
@@ -71,7 +79,9 @@ lint = { cmd = "ruff check", help = "Lint with Ruff" }
 lint-fix = { cmd = "ruff check --fix", help = "Lint and apply safe fixes" }
 format = { cmd = "uv format", help = "Format with Ruff (via uv format)" }
 format-check = { cmd = "uv format --check", help = "Fail if any file needs formatting" }
-typecheck = { cmd = "uv check", help = "Type-check (uv check)" }
+typecheck-ty = { cmd = "uv check --ty-version 0.0.104", help = "Type-check with ty (uv check), pinned because ty is pre-1.0" }
+typecheck-pyright = { cmd = "pyright", help = "Type-check with pyright" }
+typecheck = { sequence = ["typecheck-ty", "typecheck-pyright"], help = "Type-check with both checkers" }
 audit = { cmd = "uv audit", help = "Check locked dependencies for known vulnerabilities" }
 test = { cmd = "pytest -m 'not integration'", help = "Unit tests; no PrusaSlicer needed" }
 test-integration = { cmd = "pytest -m integration", help = "Integration tests; need a real PrusaSlicer" }
