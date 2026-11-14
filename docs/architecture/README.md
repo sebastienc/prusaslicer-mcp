@@ -132,7 +132,7 @@ rest. Tasks are defined once in `[tool.poe.tasks]` and CI calls the same ones ([
 | Protocol | nothing; starts the real server as a subprocess and talks to it over stdio | `tests/test_stdio.py` |
 | Integration | a real PrusaSlicer; marked `integration` automatically when a test uses the `prusaslicer` fixture, and skipped when no install is found | `tests/test_server.py` |
 
-CI (`.github/workflows/ci.yml`) runs these jobs: lint and format, type check, dependency audit, unit tests on
+CI (`.github/workflows/ci.yml`) runs these jobs: lint and format, type check (`ty` via `uv check`, pinned, then pyright; [ADR 0010](../decisions/0010-pin-ty-and-add-pyright.md)), dependency audit, unit tests on
 Python 3.12 and 3.14 with a 95% coverage floor, integration tests on macOS, and commitlint, then a final `ci` job that depends on all of them and fails unless each one succeeded. Branch protection requires that one `ci` check (GitHub names checks after jobs, not workflows), so adding or renaming a job never breaks the ruleset; a new job must be added to the `ci` job's `needs`. The integration job
 installs the official 2.9.7 `.dmg` (cached by version, `PRUSASLICER_VERSION` in the workflow) and builds a
 throwaway data directory from the profiles inside the app. Linux is not covered because Prusa no longer attaches Linux

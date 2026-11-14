@@ -103,8 +103,8 @@ uv run poe test-integration  # tests that need a real PrusaSlicer (skip when abs
 uv run poe                   # list every task
 ```
 
-`uv format`, `uv check` and `uv audit` are uv's own formatter, type checker and dependency audit. Ruff does the
-linting. Commits follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat: ...`, `fix: ...`):
+`uv format`, `uv check` and `uv audit` are uv's own formatter, type checker (ty, pinned) and dependency audit.
+Ruff does the linting and pyright type-checks alongside ty ([ADR 0010](docs/decisions/0010-pin-ty-and-add-pyright.md)). Commits follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat: ...`, `fix: ...`):
 CI checks them with commitlint, and [Release Please](https://github.com/googleapis/release-please) opens a release
 pull request from them. See [ADR 0008](docs/decisions/0008-conventional-commits-and-release-please.md) and
 [ADR 0009](docs/decisions/0009-quality-gate-toolchain.md).
