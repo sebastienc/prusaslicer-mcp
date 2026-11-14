@@ -1,10 +1,9 @@
 """Unit tests for reading the settings stored in a PrusaSlicer project 3MF (no PrusaSlicer needed)."""
 
 import pytest
+from conftest import PROJECT_CONFIG
 
 from prusaslicer_mcp.project import read_project
-
-from conftest import PROJECT_CONFIG
 
 
 @pytest.mark.parametrize("name", ["part.3mf", "PART.3MF", "Part.3mf"])
@@ -27,6 +26,7 @@ def test_the_profile_names_stored_in_the_project_are_reported(make_3mf):
     project = read_project(model)
 
     # Then the three names are reported, without the quotes around the filament name
+    assert project is not None
     assert project.printer_profile == "Original Prusa i3 MK3S & MK3S+ MMU2S Single"
     assert project.print_profile == "0.20mm QUALITY @MK3"
     assert project.material_profile == "Prusament PLA"
@@ -41,6 +41,7 @@ def test_several_filaments_are_listed_together(make_3mf):
     project = read_project(model)
 
     # Then all of them are reported
+    assert project is not None
     assert project.material_profile == "Prusament PLA; Prusament PETG"
 
 
@@ -52,6 +53,7 @@ def test_the_settings_that_decide_a_print_are_reported(make_3mf):
     project = read_project(model)
 
     # Then those settings are reported as the project stores them
+    assert project is not None
     assert project.settings == {
         "layer_height": "0.2",
         "perimeters": "2",
@@ -73,6 +75,7 @@ def test_settings_missing_from_the_project_are_left_out(make_3mf):
     project = read_project(model)
 
     # Then only that setting is reported, and the profile names are unknown
+    assert project is not None
     assert project.settings == {"fill_density": "35%"}
     assert (project.printer_profile, project.print_profile, project.material_profile) == (None, None, None)
 

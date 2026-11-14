@@ -40,7 +40,7 @@ RECORD_ARGV = 'printf "%s\\n" "$@" > "{}"'
 
 async def test_exit_code_and_both_output_streams_are_returned(fake_slicer):
     # Given an executable that writes to stdout and stderr and exits with status 3
-    config = fake_slicer('echo to-stdout; echo to-stderr >&2; exit 3')
+    config = fake_slicer("echo to-stdout; echo to-stderr >&2; exit 3")
 
     # When it is run
     result = await cli.run(config, [])

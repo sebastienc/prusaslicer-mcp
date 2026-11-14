@@ -11,7 +11,13 @@ import pytest
 from prusaslicer_mcp import config
 from prusaslicer_mcp.config import ConfigError, PrusaSlicerNotFound, default_datadir, find_executable, load_config
 
-ENV_VARS = ("PRUSASLICER_PATH", "PRUSASLICER_DATADIR", "PRUSASLICER_MCP_OUTPUT_DIR", "PRUSASLICER_MCP_TIMEOUT", "APPDATA")
+ENV_VARS = (
+    "PRUSASLICER_PATH",
+    "PRUSASLICER_DATADIR",
+    "PRUSASLICER_MCP_OUTPUT_DIR",
+    "PRUSASLICER_MCP_TIMEOUT",
+    "APPDATA",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +31,9 @@ def machine(tmp_path, monkeypatch):
     path_dir.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("PATH", str(path_dir))
-    monkeypatch.setattr(config, "_MAC_GLOBS", [str(tmp_path / "Applications/*/PrusaSlicer.app/Contents/MacOS/PrusaSlicer")])
+    monkeypatch.setattr(
+        config, "_MAC_GLOBS", [str(tmp_path / "Applications/*/PrusaSlicer.app/Contents/MacOS/PrusaSlicer")]
+    )
     monkeypatch.setattr(config, "_WIN_GLOBS", [str(tmp_path / "ProgramFiles/PrusaSlicer/prusa-slicer-console.exe")])
     return SimpleNamespace(root=tmp_path, home=home, path_dir=path_dir)
 
@@ -98,7 +106,9 @@ def test_executable_is_found_on_path(machine, name):
 def test_macos_install_in_a_nonstandard_folder_is_found(machine, monkeypatch):
     # Given a Mac whose PrusaSlicer.app sits in a folder with a space in its name, and nothing on PATH
     on_platform(monkeypatch, "darwin")
-    expected = make_file(machine.root / "Applications/Original Prusa Drivers/PrusaSlicer.app/Contents/MacOS/PrusaSlicer")
+    expected = make_file(
+        machine.root / "Applications/Original Prusa Drivers/PrusaSlicer.app/Contents/MacOS/PrusaSlicer"
+    )
 
     # When the executable is located
     found = find_executable()

@@ -26,14 +26,24 @@ mcp = MCPServer(
     ),
 )
 
-_READ_ONLY = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
+_READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 
 _MODEL_SUFFIXES = {".stl", ".3mf", ".obj", ".amf", ".step", ".stp"}
 _OVERRIDE_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 # Flags the server sets itself, plus `save`, which would write into the user's PrusaSlicer data directory.
 # An override with one of these names would silently undo a guarantee (e.g. binary_gcode=1 beats our text G-code).
 _RESERVED_OVERRIDES = frozenset(
-    {"export_gcode", "binary_gcode", "printer_profile", "print_profile", "material_profile", "output", "datadir", "save", "center"}
+    {
+        "export_gcode",
+        "binary_gcode",
+        "printer_profile",
+        "print_profile",
+        "material_profile",
+        "output",
+        "datadir",
+        "save",
+        "center",
+    }
 )
 _PROFILE_NOT_FOUND = re.compile(r"profile '.*' wasn't found", re.IGNORECASE)
 _PROFILE_HINT = " (hint: profile names must match exactly; get them from list_printers and list_profiles)"
@@ -60,6 +70,25 @@ async def _run(cfg: Config, args: list[str], timeout: float | None = None) -> cl
 
 def _with_profile_hint(detail: str) -> str:
     return detail + _PROFILE_HINT if _PROFILE_NOT_FOUND.search(detail) else detail
+
+
+def _chosen_profiles(
+    printer: str | None, print_: str | None, material: str | None, project: ProjectInfo | None
+) -> tuple[str, str, str] | None:
+    """The three profile names to slice with, or None to use the project's own saved settings (ADR 0007).
+
+    All three or none: a partial set would mix profile values with the project's. None is only for a project.
+    """
+    if printer is not None and print_ is not None and material is not None:
+        return printer, print_, material
+    if printer is None and print_ is None and material is None:
+        if project is None:
+            raise ToolError(
+                "printer_profile, print_profile and material_profile are required unless the model is a PrusaSlicer "
+                "project (a .3mf saved from PrusaSlicer), which is sliced with its own settings"
+            )
+        return None
+    raise ToolError("Give all three profiles (printer_profile, print_profile, material_profile) or none")
 
 
 def _model_path(path: str) -> Path:
@@ -153,7 +182,11 @@ async def list_printers(
                         max_print_height=bed.get("max_print_height"),
                     )
                 )
-        models.append(PrinterModel(id=m["id"], name=_display_name(m["name"]), technology=m.get("technology", technology), variants=variants))
+        models.append(
+            PrinterModel(
+                id=m["id"], name=_display_name(m["name"]), technology=m.get("technology", technology), variants=variants
+            )
+        )
     return models
 
 
@@ -214,7 +247,9 @@ def inspect_model(
     path = _model_path(model_path)
     try:
         mesh = trimesh.load(path, force="mesh")
-    except Exception as e:  # trimesh's parsers raise assorted types on bad input (BadZipFile, ValueError, ImportError, ...)
+    except (
+        Exception
+    ) as e:  # trimesh's parsers raise assorted types on bad input (BadZipFile, ValueError, ImportError, ...)
         raise ToolError(f"Could not read {path.name} as a {path.suffix.lower()} model: {e}") from e
     if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
         raise ToolError("Could not load a triangle mesh from this file.")
@@ -230,10 +265,12 @@ def inspect_model(
         warnings.append(f"Model has {parts} disconnected parts.")
 
     fits = None
-    if None not in (bed_width, bed_depth, max_height):
-        fits = size[0] <= bed_width and size[1] <= bed_depth and size[2] <= max_height  # type: ignore[operator]
+    if bed_width is not None and bed_depth is not None and max_height is not None:
+        fits = size[0] <= bed_width and size[1] <= bed_depth and size[2] <= max_height
         if not fits:
-            warnings.append(f"Model ({size[0]:.1f}x{size[1]:.1f}x{size[2]:.1f} mm) exceeds the build volume in at least one axis (rotation not considered).")
+            warnings.append(
+                f"Model ({size[0]:.1f}x{size[1]:.1f}x{size[2]:.1f} mm) exceeds the build volume in at least one axis (rotation not considered)."
+            )
 
     # PrusaSlicer places STL/OBJ itself but keeps a 3MF's stored coordinates, so a 3MF that fits by size
     # can still sit off the bed (e.g. modelled around the origin) and fail to slice.
@@ -248,7 +285,7 @@ def inspect_model(
 
     return ModelInfo(
         path=str(path),
-        triangles=int(len(mesh.faces)),
+        triangles=len(mesh.faces),
         size_mm=size,  # type: ignore[arg-type]
         bounds_min=tuple(float(x) for x in mesh.bounds[0]),  # type: ignore[arg-type]
         bounds_max=tuple(float(x) for x in mesh.bounds[1]),  # type: ignore[arg-type]
@@ -283,13 +320,24 @@ async def slice_model(
             "settings (supports, brim, infill...). Giving profiles makes PrusaSlicer ignore those saved settings."
         ),
     ] = None,
-    print_profile: Annotated[str | None, Field(description="Exact print profile name, from list_profiles. All three profiles or none.")] = None,
-    material_profile: Annotated[str | None, Field(description="Exact filament profile name, from list_profiles. All three profiles or none.")] = None,
+    print_profile: Annotated[
+        str | None, Field(description="Exact print profile name, from list_profiles. All three profiles or none.")
+    ] = None,
+    material_profile: Annotated[
+        str | None, Field(description="Exact filament profile name, from list_profiles. All three profiles or none.")
+    ] = None,
     overrides: Annotated[
         dict[str, str] | None,
-        Field(description="Optional PrusaSlicer settings, e.g. {'fill_density': '25%', 'perimeters': '3'}. Keys are config option names (see PrusaSlicer --help-fff); options the server sets itself (profiles, output, binary_gcode, datadir, save) are rejected."),
+        Field(
+            description="Optional PrusaSlicer settings, e.g. {'fill_density': '25%', 'perimeters': '3'}. Keys are config option names (see PrusaSlicer --help-fff); options the server sets itself (profiles, output, binary_gcode, datadir, save) are rejected."
+        ),
     ] = None,
-    output_path: Annotated[str | None, Field(description="Where to write the G-code (default: <output dir>/<model>.gcode). Its folder is created if missing, but only that one level: the folder above it must already exist.")] = None,
+    output_path: Annotated[
+        str | None,
+        Field(
+            description="Where to write the G-code (default: <output dir>/<model>.gcode). Its folder is created if missing, but only that one level: the folder above it must already exist."
+        ),
+    ] = None,
     center: Annotated[
         bool,
         Field(
@@ -305,15 +353,7 @@ async def slice_model(
     cfg = get_config()
     model = _model_path(model_path)
     project = read_project(model)
-    profiles = (printer_profile, print_profile, material_profile)
-    if all(p is None for p in profiles):
-        if project is None:
-            raise ToolError(
-                "printer_profile, print_profile and material_profile are required unless the model is a PrusaSlicer "
-                "project (a .3mf saved from PrusaSlicer), which is sliced with its own settings"
-            )
-    elif any(p is None for p in profiles):
-        raise ToolError("Give all three profiles (printer_profile, print_profile, material_profile) or none")
+    profiles = _chosen_profiles(printer_profile, print_profile, material_profile, project)
 
     if output_path:
         out = Path(output_path).expanduser().resolve()
@@ -333,8 +373,9 @@ async def slice_model(
         create_all_parents = True
 
     args = ["--export-gcode", "--binary-gcode=0"]
-    if printer_profile is not None:
-        args += ["--printer-profile", printer_profile, "--print-profile", print_profile, "--material-profile", material_profile]
+    if profiles is not None:
+        printer, print_, material = profiles
+        args += ["--printer-profile", printer, "--print-profile", print_, "--material-profile", material]
     for key, value in (overrides or {}).items():
         if not _OVERRIDE_KEY.match(key):
             raise ToolError(f"Invalid override key: {key!r}")
@@ -344,7 +385,7 @@ async def slice_model(
             raise ToolError(f"Invalid override value for {key!r}")
         args.append(f"--{key.replace('_', '-')}={value}")
     if center:
-        bed_printer = printer_profile if printer_profile is not None else (project.printer_profile if project else None)
+        bed_printer = profiles[0] if profiles is not None else (project.printer_profile if project else None)
         if bed_printer is None:
             raise ToolError("Cannot centre on the bed: the project does not name its printer, so pass printer_profile")
         x, y = await _bed_center(bed_printer)
@@ -369,7 +410,10 @@ async def slice_model(
     except ValueError as e:
         raise ToolError(str(e)) from e
     return SliceResult(
-        gcode_path=str(out), stats=stats, settings_from="profiles" if printer_profile is not None else "project", warnings=warnings
+        gcode_path=str(out),
+        stats=stats,
+        settings_from="profiles" if profiles is not None else "project",
+        warnings=warnings,
     )
 
 

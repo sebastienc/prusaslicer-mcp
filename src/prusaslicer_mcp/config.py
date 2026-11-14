@@ -62,9 +62,7 @@ def find_executable() -> Path:
             if _is_executable(Path(match)):
                 return Path(match)
 
-    raise PrusaSlicerNotFound(
-        "PrusaSlicer not found. Install it or set PRUSASLICER_PATH to the executable."
-    )
+    raise PrusaSlicerNotFound("PrusaSlicer not found. Install it or set PRUSASLICER_PATH to the executable.")
 
 
 def default_datadir() -> Path | None:

@@ -188,7 +188,7 @@ def test_an_empty_file_has_no_statistics_at_all(write_gcode):
     stats = parse_gcode_stats(path)
 
     # Then every field is unknown
-    assert stats.model_dump() == {key: None for key in stats.model_dump()}
+    assert stats.model_dump() == dict.fromkeys(stats.model_dump())
 
 
 def test_only_layer_change_comments_at_the_start_of_a_line_are_counted(write_gcode):

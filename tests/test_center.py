@@ -22,13 +22,21 @@ PRINTERS = {
                 {
                     "name": "0.4",
                     "printer_profiles": [
-                        {"name": "Mini", "extruders_cnt": 1, "bed": {"width": 180, "height": 180, "max_print_height": 180}}
+                        {
+                            "name": "Mini",
+                            "extruders_cnt": 1,
+                            "bed": {"width": 180, "height": 180, "max_print_height": 180},
+                        }
                     ],
                 },
                 {
                     "name": "0.4",
                     "printer_profiles": [
-                        {"name": "MK3S", "extruders_cnt": 1, "bed": {"width": 250, "height": 210, "max_print_height": 210}}
+                        {
+                            "name": "MK3S",
+                            "extruders_cnt": 1,
+                            "bed": {"width": 250, "height": 210, "max_print_height": 210},
+                        }
                     ],
                 },
             ],
@@ -41,7 +49,9 @@ PRINTERS = {
 def slicer(tmp_path, monkeypatch):
     """Fake CLI: answers the printer query, records slice calls, writes a stub G-code file."""
     monkeypatch.setattr(
-        server, "_config", Config(executable=tmp_path / "PrusaSlicer", datadir=None, output_dir=tmp_path / "out", timeout=5)
+        server,
+        "_config",
+        Config(executable=tmp_path / "PrusaSlicer", datadir=None, output_dir=tmp_path / "out", timeout=5),
     )
     calls: list[list[str]] = []
     state = {"stderr": ""}
@@ -68,7 +78,13 @@ def model(tmp_path):
 
 
 def slice_args(model, printer="Mini", **extra):
-    return {"model_path": str(model), "printer_profile": printer, "print_profile": "q", "material_profile": "m", **extra}
+    return {
+        "model_path": str(model),
+        "printer_profile": printer,
+        "print_profile": "q",
+        "material_profile": "m",
+        **extra,
+    }
 
 
 def centre_passed_to_prusaslicer(slicer) -> str:

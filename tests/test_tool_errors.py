@@ -141,7 +141,8 @@ async def test_unknown_profile_error_points_at_the_listing_tools(fake_config, mo
 
     # Then the slicer's own text is kept and the caller is told where the exact names come from
     assert "wasn't found" in msg
-    assert "list_printers" in msg and "list_profiles" in msg
+    assert "list_printers" in msg
+    assert "list_profiles" in msg
 
 
 async def test_unrelated_slicer_error_gets_no_profile_hint(fake_config, model, monkeypatch):

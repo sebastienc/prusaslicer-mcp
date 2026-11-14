@@ -5,11 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 import trimesh
+from conftest import PROJECT_CONFIG
 from mcp.server.mcpserver.exceptions import ToolError
 
 from prusaslicer_mcp import server
-
-from conftest import PROJECT_CONFIG
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +25,9 @@ async def installed():
     printers = await server.list_printers()
     printer = next(v.printer_profile for p in printers for v in p.variants)
     print_profile = (await server.list_profiles(printer)).print_profiles[0]
-    return SimpleNamespace(printer=printer, print_profile=print_profile.name, filament=print_profile.filament_profiles[0])
+    return SimpleNamespace(
+        printer=printer, print_profile=print_profile.name, filament=print_profile.filament_profiles[0]
+    )
 
 
 @pytest.fixture
@@ -44,7 +45,8 @@ async def test_list_printers_returns_models_with_variants():
     printers = await server.list_printers()
 
     # Then there are models and each one has at least one variant
-    assert printers and all(p.variants for p in printers)
+    assert printers
+    assert all(p.variants for p in printers)
 
 
 async def test_list_printers_shows_model_names_without_doubled_ampersands():
@@ -74,7 +76,8 @@ def test_inspect_model_reports_size_volume_and_fit_for_a_cube_on_a_large_bed(cub
     info = server.inspect_model(str(cube_stl), bed_width=180, bed_depth=180, max_height=180)
 
     # Then it is watertight, fits, and has the cube's size and volume
-    assert info.watertight and info.fits_bed
+    assert info.watertight
+    assert info.fits_bed
     assert info.size_mm == pytest.approx((20, 20, 20))
     assert info.volume_mm3 == pytest.approx(8000)
 
