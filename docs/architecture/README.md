@@ -37,6 +37,8 @@ src/prusaslicer_mcp/
   gcode.py      parse print statistics from text G-code
   project.py    read the profiles and key settings stored in a PrusaSlicer project 3MF
   slicer_output.py  turn PrusaSlicer's stdout into warnings
+  preview_model.py  render a mesh to a picture (numpy + Pillow)
+  preview_gcode.py  read toolpaths from G-code and draw a layer or a side silhouette
 tests/               unit tests (no PrusaSlicer) plus a few integration tests; see Testing below
 .github/
   workflows/ci.yml             lint, types, audit, unit (3.12, 3.14), integration (macOS), commitlint
@@ -50,6 +52,8 @@ tests/               unit tests (no PrusaSlicer) plus a few integration tests; s
 | `cli.py` | `run(config, args, timeout)` → `CliResult(returncode, stdout, stderr)`. Prepends `--datadir` when configured. Kills the process on timeout (`CliTimeout`). | `config` |
 | `gcode.py` | `parse_gcode_stats(path)` → `GcodeStats`. Rejects binary G-code. `layer_gap_warning(path)` reads the `;Z:` layer markers and describes stretches where the print jumps up by more than three typical layers (and at least 0.6 mm), meaning nothing is printed there. | pydantic |
 | `slicer_output.py` | `parse_warnings(stdout)` → one string per PrusaSlicer warning. A warning is a block: a line containing "warning" plus the plain lines after it (more gaps, object name, advice), up to the next `NN => ...` progress line or the final export message. | stdlib |
+| `preview_model.py` | `render_model(mesh, view, size)` → a Pillow image: samples the surface, projects it orthographically, z-buffers, shades two-sided and fills sampling gaps. Views `iso`, `front`, `side`, `top` and `sheet`; z is up; the model is centred whatever its position. ([ADR 0011](../decisions/0011-render-previews-with-numpy-and-pillow.md)) | numpy, Pillow |
+| `preview_gcode.py` | `scan_gcode(path)` and `iter_extrusions(path)` read the extruding `G1` moves (relative or absolute extrusion, start purge line excluded, `G2`/`G3` counted but not drawn) with their layer, height and `;TYPE:` feature; `render_layer` draws one layer with the layer below as a ghost; `render_profile` draws front and side silhouettes on a 10 mm grid. | numpy, Pillow |
 | `project.py` | `read_project(path)` → `ProjectInfo` (stored printer/print/material profile names and `KEY_SETTINGS`) or `None` when the file is not a `.3mf` that embeds `Metadata/Slic3r_PE.config`. | stdlib, pydantic |
 | `server.py` | Tool surface. Validates input, builds CLI args, shapes pydantic results. Lazily loads `Config` on first use (`get_config()`). | all of the above, `trimesh` |
 
@@ -61,8 +65,19 @@ tests/               unit tests (no PrusaSlicer) plus a few integration tests; s
 | `list_profiles(printer_profile)` | `--query-print-filament-profiles --printer-profile ...` | Print profiles with compatible filament profiles. Read-only. |
 | `inspect_model(model_path, bed_*, max_height)` | none | `trimesh` load; size, volume (only when watertight), part count, optional fit check, and `project` (see `project.py`) for a 3MF saved from PrusaSlicer. `fits_bed` compares size only (rotation not considered). For a `.3mf` with a bed given it also warns when the stored position is off the bed, since PrusaSlicer keeps a 3MF's coordinates (see Known quirks). Read-only. |
 | `slice_model(model_path, printer_profile?, print_profile?, material_profile?, overrides, output_path, center)` | `--export-gcode --binary-gcode=0 [--printer-profile ... --print-profile ... --material-profile ...] [--center X,Y] ...` | Writes G-code; returns path + `GcodeStats` + `settings_from` (`profiles`/`project`) + warnings. The three profiles are all-or-none; none is allowed only for a PrusaSlicer project, which is then sliced with its own saved settings ([ADR 0007](../decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md)). `center=true` looks up the bed size (`_bed_center`, via `--query-printer-models`, for the given printer profile or the project's own) and centres on its middle, assuming a corner origin. Not read-only. |
+| `preview_model(model_path, view, size)` | none | Loads the mesh like `inspect_model`, renders it, and returns a PNG plus a caption with the size and a note that z is up. `size` is 128 to 1024 (default 640). Read-only. |
+| `preview_gcode(gcode_path, view, layer, size)` | none | `view=layer` (default; `layer` counts from 1, default the middle layer) or `view=profile`. Refuses binary G-code and files with no extruding moves. The profile caption repeats the layer-gap warning. Read-only. |
 
 Profile names are exact-match; callers get them from `list_printers` / `list_profiles`.
+
+## Previews
+
+`preview_model` and `preview_gcode` return a PNG and a text caption through the SDK's `Image` helper ([ADR 0011](../decisions/0011-render-previews-with-numpy-and-pillow.md)). Both are read-only and need no PrusaSlicer. Known limits:
+
+- Orthographic only: no perspective, no textures, simple two-sided shading. The model is drawn as stored, z up, so a Y-up scan appears lying down, which is the point.
+- `preview_gcode` reads text G-code only (ADR 0005), parses in plain Python in two passes (about 2 s per million extruding moves), and does not draw arcs (`G2`/`G3`); it counts them and says so in the caption.
+- The side silhouette fits both panels to the larger of the x and y extent, so a wide, low print uses only part of the picture.
+- Pictures are 128 to 1024 px square (default 640), to bound the cost of reading them.
 
 ## Data flow: `slice_model`
 
@@ -114,7 +129,7 @@ Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `Pru
 
 ## Known quirks (PrusaSlicer 2.9.7)
 
-- **A successful slice can still be unprintable.** A scan exported Y-up slices without error and with plausible statistics, but it lies on its side, so whole stretches of its height print nothing (an 88 mm statue had four gaps totalling 33 mm; stood upright, the same mesh slices to 634 layers with none). PrusaSlicer says so in a multi-line warning that it truncates (`(Some lines not shown)`) and that did not list every gap, so `slice_model` returns that whole block and also checks the G-code's layer heights itself (`layer_gap_warning`).
+- **A successful slice can still be unprintable.** A scan exported Y-up slices without error and with plausible statistics, but it lies on its side, so whole stretches of its height print nothing (an 88 mm statue had four gaps totalling 33 mm). The scan we found this with also has a real hole: its base has no bottom face (687 open edges), so rotated head-up PrusaSlicer refuses it (`object with no extrusions in the first layer`), and rotated head-down it slices cleanly but upside down. PrusaSlicer's own warning is multi-line, is truncated (`(Some lines not shown)`) and did not list every gap, so `slice_model` returns that whole block and also checks the G-code's layer heights itself (`layer_gap_warning`). `preview_model` and `preview_gcode` exist to make this visible.
 - **Profile flags override a project's embedded settings.** Passing `--printer-profile`/`--print-profile`/`--material-profile` with a project 3MF makes PrusaSlicer use the plain profile values and ignore what the project saved (supports, brim, infill...). Without the flags it uses the project's own configuration. `slice_model` therefore omits them for a project when none are given ([ADR 0007](../decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md)).
 - `--query-*` actions **exit with status 1 even when they succeed**. `_query_json` therefore checks that the `-o` file exists, is non-empty, and parses, instead of the exit code.
 - Printer *model* names in the vendor bundles are wx-escaped (`&&` renders as `&` in the GUI), while profile names use a single `&` (e.g. `Original Prusa MINI & MINI+ Input Shaper`). `list_printers` unescapes the model `name` for display (`_display_name` in `server.py`); `id` and every `printer_profile` value are passed through untouched. Always pass the `printer_profile` value, not the model name.
