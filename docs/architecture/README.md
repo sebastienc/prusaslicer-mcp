@@ -134,6 +134,12 @@ installs the official 2.9.7 `.dmg` (cached by version, `PRUSASLICER_VERSION` in 
 throwaway data directory from the profiles inside the app. Linux is not covered because Prusa no longer attaches Linux
 builds to its GitHub releases.
 
+## Releases
+
+Release Please (`.github/workflows/release-please.yml`, [ADR 0008](../decisions/0008-conventional-commits-and-release-please.md)) reads the Conventional Commits on `main` and keeps a release pull request open. Merging it tags `prusaslicer-mcp-vX.Y.Z`, publishes a GitHub release, writes `CHANGELOG.md`, and bumps the version in `pyproject.toml`, `uv.lock` and `.release-please-manifest.json`. Nothing is published to PyPI.
+
+Only `feat`, `fix`, `perf` and `revert` commits appear in the notes and can trigger a release; every other type is hidden, and Release Please skips a release whose notes would be empty. Before 1.0 a `feat` bumps the minor version and a `fix` the patch.
+
 ## Extension points and next steps
 
 Planned work is tracked in [`ROADMAP.md`](../../ROADMAP.md). Natural seams in the current design:

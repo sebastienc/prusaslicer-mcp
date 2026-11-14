@@ -14,17 +14,17 @@ When an item ships, move it to **Done** and update the README and architecture d
 - TDD as the default workflow, and Given/When/Then as the test style, both written down in `.claude/rules/testing.md`; every existing test migrated to that shape
 - PrusaSlicer projects keep their own settings: profiles are optional for a saved project, `inspect_model` reports what it stores, and the result says which settings applied ([ADR 0007](docs/decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md))
 - G-code statistics add up every extruder's filament length and volume (multi-material footers list one value per extruder)
+- Releases: the `ci-required-main` ruleset is active and requires the single `ci` check, Release Please has cut `v0.1.1`, and only `feat`, `fix`, `perf` and `revert` commits can trigger a release
 - Quality gates ([ADR 0009](docs/decisions/0009-quality-gate-toolchain.md)): `uv run poe check` (Ruff lint, `uv format`, `uv check`, unit tests), `uv audit`, an automated stdio protocol test, and CI with lint, types, audit, unit tests on Python 3.12 and 3.14, integration tests on macOS (PrusaSlicer download cached by version) and commitlint
 - Conventional Commits and Release Please release pull requests ([ADR 0008](docs/decisions/0008-conventional-commits-and-release-please.md))
 - Test gaps filled and mutation-checked: coverage 84% to 99% (line+branch), only `main()` uncovered (an automated stdio test is in Quality gates). The new tests exposed and fixed six problems: an opaque crash on an invalid `PRUSASLICER_MCP_TIMEOUT`, an opaque crash on a corrupt 3MF/STEP/AMF, overrides that could undo server guarantees (`binary_gcode=1`, `save`), folders created for refused requests, a made-up `0` seconds for an unrecognised print time, and a whole G-code file read into memory to check four bytes
 
 ## Next
 
-1. **Finish the CI setup.** Activate the `ci-required-main` ruleset (it is `disabled`); it requires the `ci` check, which a job in `ci.yml` now provides. Merge the Release Please pull request when you want a release. Note a `docs:` commit alone triggers one; hide `docs` with `changelog-sections` in `release-please-config.json` if that is noise.
-2. **Dogfood.** The server is registered for this repo through the committed `.mcp.json` (project scope). Use it on real models; note friction and fix it. Candidate gaps are tool descriptions, error messages, and defaults.
-3. **Preview rendering.** Return PNGs so Claude can *see* a model and individual sliced layers (adds `matplotlib`; needs an ADR on the rendering approach, e.g. mesh silhouette vs. parsed toolpaths).
-4. **Transforms and multi-model plates.** Expose `--rotate`, `--rotate-x/-y`, `--scale`, `--scale-to-fit`, `--dont-arrange`, `--split`, and `--merge` on `slice_model`. (`--center` shipped as the `center` option; it assumes a corner bed origin, so delta printers need a look.)
-5. **Validate overrides.** Check setting keys against PrusaSlicer's real option list (`--help-fff`) so a typo fails early with a useful message instead of a slicer error.
+1. **Dogfood.** The server is registered for this repo through the committed `.mcp.json` (project scope). Use it on real models; note friction and fix it. Candidate gaps are tool descriptions, error messages, and defaults.
+2. **Preview rendering.** Return PNGs so Claude can *see* a model and individual sliced layers (adds `matplotlib`; needs an ADR on the rendering approach, e.g. mesh silhouette vs. parsed toolpaths).
+3. **Transforms and multi-model plates.** Expose `--rotate`, `--rotate-x/-y`, `--scale`, `--scale-to-fit`, `--dont-arrange`, `--split`, and `--merge` on `slice_model`. (`--center` shipped as the `center` option; it assumes a corner bed origin, so delta printers need a look.)
+4. **Validate overrides.** Check setting keys against PrusaSlicer's real option list (`--help-fff`) so a typo fails early with a useful message instead of a slicer error.
 
 ## Later
 
