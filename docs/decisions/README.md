@@ -18,3 +18,4 @@ ADRs are append-only history: to change a decision, write a new ADR and mark the
 | [0009](0009-quality-gate-toolchain.md) | Quality gates: uv first, Ruff for linting, Poe to chain them | accepted |
 | [0010](0010-pin-ty-and-add-pyright.md) | Pin ty and add pyright as a second type checker | accepted |
 | [0011](0011-render-previews-with-numpy-and-pillow.md) | Render previews ourselves with numpy and Pillow | accepted |
+| [0012](0012-transform-with-prusaslicers-own-flags.md) | Transform models with PrusaSlicer's own flags, and do not expose --merge | accepted |
