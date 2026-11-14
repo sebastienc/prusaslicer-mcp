@@ -18,7 +18,7 @@ Once registered with an MCP client, you can ask things like:
 > Prusament PLA at 0.20mm, 25% infill. How long will it take and how much filament does it use?"
 
 Behind that, the client calls `list_printers` → `list_profiles` → `inspect_model` → `slice_model` and
-reads back the print time and filament use.
+reads back the print time and filament use. `preview_model` and `preview_gcode` let it *look* at the model and at what was sliced.
 
 ## Tools
 
@@ -28,6 +28,8 @@ reads back the print time and filament use.
 | `list_profiles` | Print (quality) profiles and compatible filament profiles for a printer profile |
 | `inspect_model` | Size, volume, watertightness, part count; optional build-volume fit check (via `trimesh`), a warning when a 3MF's stored position is off the bed, and, for a 3MF saved from PrusaSlicer, the profiles and key settings (infill, brim, supports) stored in it |
 | `slice_model` | Slice with `printer_profile` / `print_profile` / `material_profile` (all three, or none for a PrusaSlicer project, which then keeps its own saved settings), optional setting overrides and `center`; returns G-code path, time, filament, cost, layers, and whether the project's or the profiles' settings were used |
+| `preview_model` | A PNG of a model from iso, front, side or top, or all four on one sheet, with its size and which way is up; shows a Y-up scan lying on its side at a glance |
+| `preview_gcode` | A PNG of sliced G-code: one layer's toolpaths coloured by feature, or front and side silhouettes of everything printed, where an empty stretch shows as a blank band |
 
 Profile names must match exactly; use `list_printers` and `list_profiles` to discover them.
 
@@ -78,7 +80,7 @@ Code asks you to approve project-scoped servers the first time; `claude mcp list
 
 ## Notes
 
-- A slice that succeeds is not always printable. A scan exported Y-up slices without an error and with plausible statistics, but it lies on its side, so parts of its height print nothing (it needs rotating, not repairing). `slice_model` returns PrusaSlicer's own warnings in full and adds a warning when layers skip a large stretch of the height, so read `warnings` before trusting the numbers.
+- A slice that succeeds is not always printable. A scan exported Y-up slices without an error and with plausible statistics, but it lies on its side, so parts of its height print nothing. `preview_model` shows that at a glance and `preview_gcode` (view `profile`) shows the empty stretches. A scan can also have a real hole, such as a missing base, which needs repairing as well. `slice_model` returns PrusaSlicer's own warnings in full and adds a warning when layers skip a large stretch of the height, so read `warnings` before trusting the numbers.
 - Plain 3MF files (exported from CAD, not saved from PrusaSlicer) keep their stored coordinates, so a part modelled around the origin sits half off the bed and slicing fails with "All objects are outside of the print volume". Pass `center=true` to `slice_model` to place it in the middle of the bed. STL/OBJ files are placed automatically, and 3MF projects saved from PrusaSlicer should be sliced with `center=false` to keep their layout.
 
 - `--query-*` actions exit with status 1 on success in 2.9.7; the server judges them by their output file.
