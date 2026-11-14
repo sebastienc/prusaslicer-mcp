@@ -20,7 +20,7 @@ When an item ships, move it to **Done** and update the README and architecture d
 
 ## Next
 
-1. **Finish the CI setup.** These are repository settings, not code: turn on "Allow GitHub Actions to create and approve pull requests" (Release Please needs it), add a `RELEASE_PLEASE_TOKEN` personal access token so the release pull request gets CI, and make the `ci` checks required on `main`. Check the first release pull request touches exactly one line of `uv.lock`.
+1. **Finish the CI setup.** Activate the `ci-required-main` ruleset (it is `disabled`); it requires the `ci` check, which a job in `ci.yml` now provides. Merge the Release Please pull request when you want a release. Note a `docs:` commit alone triggers one; hide `docs` with `changelog-sections` in `release-please-config.json` if that is noise.
 2. **Dogfood.** The server is registered for this repo through the committed `.mcp.json` (project scope). Use it on real models; note friction and fix it. Candidate gaps are tool descriptions, error messages, and defaults.
 3. **Preview rendering.** Return PNGs so Claude can *see* a model and individual sliced layers (adds `matplotlib`; needs an ADR on the rendering approach, e.g. mesh silhouette vs. parsed toolpaths).
 4. **Transforms and multi-model plates.** Expose `--rotate`, `--rotate-x/-y`, `--scale`, `--scale-to-fit`, `--dont-arrange`, `--split`, and `--merge` on `slice_model`. (`--center` shipped as the `center` option; it assumes a corner bed origin, so delta printers need a look.)
