@@ -476,7 +476,6 @@ def test_the_warning_says_how_much_is_missing_and_where_it_starts(write_gcode):
     assert "11.2 mm of the 12.4 mm" in warning
     assert "2 gaps" in warning
     assert "between z 0.4 and 9 mm" in warning
-    assert "repair" in warning
 
 
 def test_the_warning_uses_the_singular_for_one_gap(write_gcode):
@@ -489,3 +488,16 @@ def test_the_warning_uses_the_singular_for_one_gap(write_gcode):
     # Then it says "1 gap", not "1 gaps"
     assert warning is not None
     assert "1 gap," in warning
+
+
+def test_the_warning_suggests_changing_the_orientation_before_repairing_the_mesh(write_gcode):
+    # Given G-code with an empty stretch, as a Y-up scan lying on its side produces
+    path = write_gcode(layers(0.2, 0.4, 9.0, 9.2, 9.4))
+
+    # When the gap warning is built
+    warning = layer_gap_warning(path)
+
+    # Then orientation comes first, because that was the real cause for a scan, and repair second
+    assert warning is not None
+    assert "Y-up" in warning
+    assert warning.index("rotate") < warning.index("repair")

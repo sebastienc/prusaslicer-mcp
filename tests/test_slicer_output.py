@@ -8,7 +8,7 @@ import pytest
 
 from prusaslicer_mcp.slicer_output import parse_warnings
 
-# What PrusaSlicer 2.9.7 printed for a scanned mesh with holes in it (paths shortened).
+# What PrusaSlicer 2.9.7 printed for a Y-up scan lying on its side, so parts of it float (paths shortened).
 REAL_OUTPUT = """\
 10 => Processing triangulated mesh
 20 => Generating perimeters
@@ -26,7 +26,7 @@ Slicing result exported to /tmp/statue.gcode
 
 
 def test_a_warning_block_is_kept_whole_as_one_warning():
-    # Given PrusaSlicer's real output for a mesh with holes
+    # Given PrusaSlicer's real output for a model with parts floating in mid-air
     stdout = REAL_OUTPUT
 
     # When the warnings are read from it

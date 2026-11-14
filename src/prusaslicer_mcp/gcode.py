@@ -96,7 +96,7 @@ def read_layer_heights(path: Path) -> list[float]:
 
 
 def find_layer_gaps(heights: list[float]) -> list[LayerGap]:
-    """Where consecutive layers jump by far more than a layer: the model has holes, or parts that float."""
+    """Where consecutive layers jump by far more than a layer: parts of the model float in mid-air."""
     if len(heights) < 3:
         return []
     pairs = list(itertools.pairwise(heights))
@@ -120,6 +120,7 @@ def layer_gap_warning(path: Path) -> str | None:
     noun = "gap" if len(gaps) == 1 else "gaps"
     return (
         f"Nothing is printed across {total:.1f} mm of the {max(heights):.1f} mm height ({len(gaps)} {noun}, the first "
-        f"between z {first.from_mm:g} and {first.to_mm:g} mm). The model probably has holes or floating parts: "
-        "repair the mesh or change its orientation."
+        f"between z {first.from_mm:g} and {first.to_mm:g} mm). Parts of the model float in mid-air. Most often it is "
+        "lying the wrong way up (scans are often Y-up): rotate it so its flat base is down. Less often the mesh "
+        "has holes: repair it."
     )
