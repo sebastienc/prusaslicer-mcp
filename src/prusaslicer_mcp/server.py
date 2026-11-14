@@ -9,11 +9,12 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from . import cli
-from .config import Config, load_config
+from .config import Config, PrusaSlicerNotFound, load_config
 from .gcode import GcodeStats, parse_gcode_stats
 
 mcp = MCPServer(
@@ -35,16 +36,26 @@ _config: Config | None = None
 def get_config() -> Config:
     global _config
     if _config is None:
-        _config = load_config()
+        try:
+            _config = load_config()
+        except PrusaSlicerNotFound as e:
+            raise ToolError(str(e)) from e
     return _config
+
+
+async def _run(cfg: Config, args: list[str], timeout: float | None = None) -> cli.CliResult:
+    try:
+        return await cli.run(cfg, args, timeout=timeout)
+    except cli.CliTimeout as e:
+        raise ToolError(str(e)) from e
 
 
 def _model_path(path: str) -> Path:
     p = Path(path).expanduser().resolve()
     if not p.is_file():
-        raise ValueError(f"Model file not found: {p}")
+        raise ToolError(f"Model file not found: {p}")
     if p.suffix.lower() not in _MODEL_SUFFIXES:
-        raise ValueError(f"Unsupported model type '{p.suffix}'. Supported: {sorted(_MODEL_SUFFIXES)}")
+        raise ToolError(f"Unsupported model type '{p.suffix}'. Supported: {sorted(_MODEL_SUFFIXES)}")
     return p
 
 
@@ -53,15 +64,15 @@ async def _query_json(args: list[str]) -> dict[str, Any]:
     cfg = get_config()
     with tempfile.TemporaryDirectory(prefix="prusaslicer-mcp-") as tmp:
         out = Path(tmp) / "result.json"
-        result = await cli.run(cfg, [*args, "-o", str(out)], timeout=60)
+        result = await _run(cfg, [*args, "-o", str(out)], timeout=60)
         # PrusaSlicer 2.9.x exits with status 1 even when a --query-* action succeeds,
         # so success is judged by the output file, not the exit code.
         if not out.is_file() or out.stat().st_size == 0:
-            raise RuntimeError(f"PrusaSlicer query failed (exit {result.returncode}): {result.stderr.strip() or result.stdout.strip()}")
+            raise ToolError(f"PrusaSlicer query failed (exit {result.returncode}): {result.stderr.strip() or result.stdout.strip()}")
         try:
             return json.loads(out.read_text())
         except json.JSONDecodeError as e:
-            raise RuntimeError(f"PrusaSlicer produced invalid JSON: {e}") from e
+            raise ToolError(f"PrusaSlicer produced invalid JSON: {e}") from e
 
 
 # --------------------------------------------------------------------------- printers / profiles
@@ -89,6 +100,21 @@ def _display_name(name: str) -> str:
     return name.replace("&&", "&")
 
 
+async def _bed_center(printer_profile: str) -> tuple[float, float]:
+    """Middle of the bed for a known FFF printer profile (assumes the bed origin is a corner)."""
+    data = await _query_json(["--query-printer-models", "--printer-technology", "FFF"])
+    for m in data.get("printer_models", []):
+        for v in m.get("variants", []):
+            for p in v.get("printer_profiles", []):
+                bed = p.get("bed", {})
+                if p.get("name") == printer_profile and bed.get("width") and bed.get("height"):
+                    return bed["width"] / 2, bed["height"] / 2
+    raise ToolError(
+        f"Cannot centre on the bed: printer profile {printer_profile!r} was not found with a bed size. "
+        "Use the exact name from list_printers."
+    )
+
+
 @mcp.tool(annotations=_READ_ONLY)
 async def list_printers(
     technology: Annotated[str, Field(description="'FFF' (filament) or 'SLA' (resin)")] = "FFF",
@@ -96,7 +122,7 @@ async def list_printers(
     """List the printer models installed in PrusaSlicer, with the exact printer profile
     names (use these as `printer_profile` elsewhere) and bed sizes."""
     if technology not in ("FFF", "SLA"):
-        raise ValueError("technology must be 'FFF' or 'SLA'")
+        raise ToolError("technology must be 'FFF' or 'SLA'")
     data = await _query_json(["--query-printer-models", "--printer-technology", technology])
     models: list[PrinterModel] = []
     for m in data.get("printer_models", []):
@@ -174,7 +200,7 @@ def inspect_model(
     path = _model_path(model_path)
     mesh = trimesh.load(path, force="mesh")
     if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
-        raise ValueError("Could not load a triangle mesh from this file.")
+        raise ToolError("Could not load a triangle mesh from this file.")
 
     size = tuple(float(x) for x in mesh.extents)
     warnings: list[str] = []
@@ -227,6 +253,14 @@ async def slice_model(
         Field(description="Optional PrusaSlicer settings, e.g. {'fill_density': '25%', 'perimeters': '3'}. Keys are config option names (see PrusaSlicer --help-fff)."),
     ] = None,
     output_path: Annotated[str | None, Field(description="Where to write the G-code (default: <output dir>/<model>.gcode)")] = None,
+    center: Annotated[
+        bool,
+        Field(
+            description="Move the model to the middle of the bed. Needed for plain 3MF files modelled around "
+            "the origin ('All objects are outside of the print volume'); STL/OBJ are placed automatically. "
+            "Leave false for 3MF projects saved from PrusaSlicer, which already hold their layout."
+        ),
+    ] = False,
 ) -> SliceResult:
     """Slice a model headlessly using installed PrusaSlicer profiles and return the G-code path
     plus print time, filament use and layer count. G-code is always written as text (not .bgcode)."""
@@ -249,19 +283,28 @@ async def slice_model(
     ]
     for key, value in (overrides or {}).items():
         if not _OVERRIDE_KEY.match(key):
-            raise ValueError(f"Invalid override key: {key!r}")
+            raise ToolError(f"Invalid override key: {key!r}")
         if "\n" in value or "\r" in value:
-            raise ValueError(f"Invalid override value for {key!r}")
+            raise ToolError(f"Invalid override value for {key!r}")
         args.append(f"--{key.replace('_', '-')}={value}")
+    if center:
+        x, y = await _bed_center(printer_profile)
+        args += ["--center", f"{x:g},{y:g}"]
     args += ["--output", str(out), str(model)]
 
-    result = await cli.run(cfg, args)
+    result = await _run(cfg, args)
     if result.returncode != 0 or not out.is_file():
         detail = (result.stderr.strip() or result.stdout.strip())[-2000:]
-        raise RuntimeError(f"Slicing failed (exit {result.returncode}): {detail}")
+        if "outside of the print volume" in detail and not center:
+            detail += " (hint: retry with center=true to place the model in the middle of the bed)"
+        raise ToolError(f"Slicing failed (exit {result.returncode}): {detail}")
 
     warnings = [line.strip() for line in result.stdout.splitlines() if "warning" in line.lower()]
-    return SliceResult(gcode_path=str(out), stats=parse_gcode_stats(out), warnings=warnings)
+    try:
+        stats = parse_gcode_stats(out)
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    return SliceResult(gcode_path=str(out), stats=stats, warnings=warnings)
 
 
 def main() -> None:

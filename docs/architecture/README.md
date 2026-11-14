@@ -55,7 +55,7 @@ tests/
 | `list_printers(technology)` | `--query-printer-models --printer-technology {FFF,SLA}` | Flattens model → nozzle variant → printer profile. Read-only. |
 | `list_profiles(printer_profile)` | `--query-print-filament-profiles --printer-profile ...` | Print profiles with compatible filament profiles. Read-only. |
 | `inspect_model(model_path, bed_*, max_height)` | none | `trimesh` load; size, volume (only when watertight), part count, optional fit check. Rotation is not considered in the fit check. Read-only. |
-| `slice_model(model_path, printer_profile, print_profile, material_profile, overrides, output_path)` | `--export-gcode --binary-gcode=0 ...` | Writes G-code; returns path + `GcodeStats` + warnings. Not read-only. |
+| `slice_model(model_path, printer_profile, print_profile, material_profile, overrides, output_path, center)` | `--export-gcode --binary-gcode=0 [--center X,Y] ...` | Writes G-code; returns path + `GcodeStats` + warnings. `center=true` looks up the bed size (`_bed_center`, via `--query-printer-models`) and centres on its middle, assuming a corner origin. Not read-only. |
 
 Profile names are exact-match; callers get them from `list_printers` / `list_profiles`.
 
@@ -99,7 +99,7 @@ Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `Pru
 
 ## Error handling and safety
 
-- Bad input raises `ValueError`; CLI/tool failure raises `RuntimeError`. The SDK converts both to MCP tool errors.
+- Every expected failure (bad input, PrusaSlicer not found, timeout, slicer or query error) is raised as `ToolError`. In MCP SDK 2.x only `ToolError` text reaches the client; any other exception is a "crash" whose message is withheld (`Error executing tool <name>` only). `server._run` converts `CliTimeout`, `get_config` converts `PrusaSlicerNotFound`. A slicer "outside of the print volume" failure adds a hint to retry with `center=true`.
 - No shell is ever involved. Subprocesses use `create_subprocess_exec` with an argument list and `stdin` closed.
 - Setting overrides: keys must match `^[a-z][a-z0-9_]*$`, values may not contain newlines, and each is emitted as one `--key=value` argument (underscores become hyphens).
 - Model paths are resolved, must exist, and must have a supported extension (`.stl .3mf .obj .amf .step .stp`).
@@ -111,7 +111,7 @@ Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `Pru
 - `--query-*` actions **exit with status 1 even when they succeed**. `_query_json` therefore checks that the `-o` file exists, is non-empty, and parses, instead of the exit code.
 - Printer *model* names in the vendor bundles are wx-escaped (`&&` renders as `&` in the GUI), while profile names use a single `&` (e.g. `Original Prusa MINI & MINI+ Input Shaper`). `list_printers` unescapes the model `name` for display (`_display_name` in `server.py`); `id` and every `printer_profile` value are passed through untouched. Always pass the `printer_profile` value, not the model name.
 - Recent profiles default to **binary G-code**; we force text output ([ADR 0005](../decisions/0005-always-slice-to-text-gcode.md)).
-- CLI slicing places the model according to PrusaSlicer's own arrange/transform rules; we pass no transform flags yet.
+- A plain 3MF (CAD export, not a PrusaSlicer project) keeps its stored coordinates, so a part modelled around the origin is half off the bed and slicing fails with "All objects are outside of the print volume"; `--merge` does not help for a single file. `slice_model(center=true)` passes `--center` with the bed middle. In our runs an STL was placed automatically without any flag (observed, not checked in the PrusaSlicer source). No other transform flags are exposed yet.
 
 ## Testing
 

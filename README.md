@@ -27,7 +27,7 @@ reads back the print time and filament use.
 | `list_printers` | Installed printer models, exact printer profile names, nozzle variants, bed sizes |
 | `list_profiles` | Print (quality) profiles and compatible filament profiles for a printer profile |
 | `inspect_model` | Size, volume, watertightness, part count; optional build-volume fit check (via `trimesh`) |
-| `slice_model` | Slice with `printer_profile` / `print_profile` / `material_profile`, optional setting overrides; returns G-code path, time, filament, cost, layers |
+| `slice_model` | Slice with `printer_profile` / `print_profile` / `material_profile`, optional setting overrides and `center`; returns G-code path, time, filament, cost, layers |
 
 Profile names must match exactly; use `list_printers` and `list_profiles` to discover them.
 G-code is always written as text (`--binary-gcode=0`) so statistics can be read back.
@@ -75,6 +75,8 @@ resolves the project from the working directory, and PrusaSlicer is auto-detecte
 Code asks you to approve project-scoped servers the first time; `claude mcp list` shows the status.
 
 ## Notes
+
+- Plain 3MF files (exported from CAD, not saved from PrusaSlicer) keep their stored coordinates, so a part modelled around the origin sits half off the bed and slicing fails with "All objects are outside of the print volume". Pass `center=true` to `slice_model` to place it in the middle of the bed. STL/OBJ files are placed automatically, and 3MF projects saved from PrusaSlicer should be sliced with `center=false` to keep their layout.
 
 - `--query-*` actions exit with status 1 on success in 2.9.7; the server judges them by their output file.
 - Setting overrides use PrusaSlicer config option names, e.g. `{"fill_density": "25%"}` (see `PrusaSlicer --help-fff`).

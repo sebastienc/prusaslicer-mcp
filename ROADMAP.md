@@ -8,13 +8,15 @@ When an item ships, move it to **Done** and update the README and architecture d
 
 - Wrap the PrusaSlicer 2.9.x CLI: `list_printers`, `list_profiles`, `inspect_model`, `slice_model` (v0.1.0)
 - Text G-code statistics: time, filament length/volume/weight, cost, layers
+- Tool failures reach the model as readable `ToolError`s with PrusaSlicer's own message (SDK 2.x hides any other exception)
+- `slice_model(center=true)` for plain 3MF files that sit off the bed
 - Project scaffolding: uv, direnv/`.env`, tests, Claude rules, MADR decisions, architecture doc, VS Code workspace
 
 ## Next
 
 1. **Dogfood.** The server is registered for this repo through the committed `.mcp.json` (project scope). Use it on real models; note friction and fix it. Candidate gaps are tool descriptions, error messages, and defaults.
 2. **Preview rendering.** Return PNGs so Claude can *see* a model and individual sliced layers (adds `matplotlib`; needs an ADR on the rendering approach, e.g. mesh silhouette vs. parsed toolpaths).
-3. **Transforms and multi-model plates.** Expose `--rotate`, `--rotate-x/-y`, `--scale`, `--scale-to-fit`, `--center`, `--dont-arrange`, `--split`, and `--merge` on `slice_model`.
+3. **Transforms and multi-model plates.** Expose `--rotate`, `--rotate-x/-y`, `--scale`, `--scale-to-fit`, `--dont-arrange`, `--split`, and `--merge` on `slice_model`. (`--center` shipped as the `center` option; it assumes a corner bed origin, so delta printers need a look.)
 4. **Quality gates.** CI running the unit tests on push; ruff (lint/format) and a type checker; an automated stdio protocol test (tool list, schemas, annotations) in place of the manual one.
 5. **Validate overrides.** Check setting keys against PrusaSlicer's real option list (`--help-fff`) so a typo fails early with a useful message instead of a slicer error.
 

@@ -1,6 +1,7 @@
 """Integration tests against a real PrusaSlicer install (skipped when absent)."""
 
 import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 
 from prusaslicer_mcp import server
 
@@ -34,7 +35,7 @@ def test_inspect_model_too_big(cube_stl):
 
 
 async def test_slice_rejects_bad_override(cube_stl):
-    with pytest.raises(ValueError):
+    with pytest.raises(ToolError, match="Invalid override key"):
         await server.slice_model(str(cube_stl), "x", "y", "z", overrides={"bad key; rm": "1"})
 
 
@@ -46,4 +47,21 @@ async def test_slice_model(cube_stl):
     result = await server.slice_model(str(cube_stl), printer, pp.name, pp.filament_profiles[0], overrides={"fill_density": "10%"})
     assert result.stats.estimated_time_seconds
     assert result.stats.filament_used_g
+    assert result.stats.layer_count
+
+
+async def test_slice_plain_3mf_needs_center(tmp_path):
+    """A 3MF modelled around the origin keeps its coordinates and starts half off the bed."""
+    import trimesh
+
+    model = tmp_path / "origin_cube.3mf"
+    trimesh.creation.box(extents=(20, 20, 20)).export(model)
+    printers = await server.list_printers()
+    printer = next(v.printer_profile for p in printers for v in p.variants)
+    pp = (await server.list_profiles(printer)).print_profiles[0]
+    args = (str(model), printer, pp.name, pp.filament_profiles[0])
+
+    with pytest.raises(ToolError, match="center=true"):
+        await server.slice_model(*args)
+    result = await server.slice_model(*args, center=True)
     assert result.stats.layer_count
