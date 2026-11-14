@@ -9,7 +9,8 @@ When an item ships, move it to **Done** and update the README and architecture d
 - Wrap the PrusaSlicer 2.9.x CLI: `list_printers`, `list_profiles`, `inspect_model`, `slice_model` (v0.1.0)
 - Text G-code statistics: time, filament length/volume/weight, cost, layers
 - Tool failures reach the model as readable `ToolError`s with PrusaSlicer's own message (SDK 2.x hides any other exception)
-- `slice_model(center=true)` for plain 3MF files that sit off the bed
+- `slice_model` centres plain 3MF files on the bed by default (13 of 15 in the library were stored off it), reports `centered`, and keeps `center` as an override ([ADR 0013](docs/decisions/0013-centre-plain-3mf-files-automatically.md))
+- A refused slice says how to fix it: a model bigger than the bed (sizes, `scale_to_fit`, `rotate_z=45` when it fits across the diagonal), an empty first layer, and the wipe-tower conflict; the remedies were verified on the real models that triggered them
 - Project scaffolding: uv, direnv/`.env`, tests, Claude rules, MADR decisions, architecture doc, VS Code workspace
 - TDD as the default workflow, and Given/When/Then as the test style, both written down in `.claude/rules/testing.md`; every existing test migrated to that shape
 - PrusaSlicer projects keep their own settings: profiles are optional for a saved project, `inspect_model` reports what it stores, and the result says which settings applied ([ADR 0007](docs/decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md))
