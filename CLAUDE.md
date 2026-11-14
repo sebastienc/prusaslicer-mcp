@@ -33,7 +33,7 @@ Do not run `direnv allow` for the user.
 
 ## Working here
 
-- Behavior changes need tests; `uv run pytest` must pass before committing.
+- **TDD**: write the failing test first, then the code (see `.claude/rules/testing.md`). `uv run pytest` must pass before committing.
 - Tool added/changed → update `README.md` tool table and `docs/architecture/README.md`.
 - Hard-to-reverse choice → write an ADR. Finished or newly planned work → update `ROADMAP.md`.
 - Commit/push only when asked.
