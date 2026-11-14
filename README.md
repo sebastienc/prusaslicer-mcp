@@ -90,6 +90,24 @@ Code asks you to approve project-scoped servers the first time; `claude mcp list
 - Output is always text G-code, even where the profile prefers binary (`.bgcode`).
 - FFF (filament) slicing only; single material; no transform options yet. See the [roadmap](ROADMAP.md).
 
+## Development
+
+Everything runs through `uv`; [Poe the Poet](https://poethepoet.natn.io/) chains the checks (uv has no task runner).
+
+```bash
+uv sync                      # install
+uv run poe check             # lint, format check, type check, unit tests (what CI runs, minus integration)
+uv run poe fix               # apply safe lint fixes, then format
+uv run poe test-integration  # tests that need a real PrusaSlicer (skip when absent)
+uv run poe                   # list every task
+```
+
+`uv format`, `uv check` and `uv audit` are uv's own formatter, type checker and dependency audit. Ruff does the
+linting. Commits follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat: ...`, `fix: ...`):
+CI checks them with commitlint, and [Release Please](https://github.com/googleapis/release-please) opens a release
+pull request from them. See [ADR 0008](docs/decisions/0008-conventional-commits-and-release-please.md) and
+[ADR 0009](docs/decisions/0009-quality-gate-toolchain.md).
+
 ## Documentation
 
 - [Roadmap](ROADMAP.md): what's planned

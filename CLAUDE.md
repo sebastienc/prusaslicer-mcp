@@ -16,8 +16,11 @@ It does not control the GUI. Private repo, MIT.
 
 ```bash
 uv sync                      # install (Python 3.12+)
-uv run pytest -q             # all tests; integration tests skip without PrusaSlicer
-uv run pytest -q tests/test_gcode.py   # unit tests only
+uv run poe check             # everything CI checks except integration tests: lint, format, types, unit tests
+uv run poe fix               # apply safe lint fixes, then format
+uv run poe test              # unit tests (no PrusaSlicer needed)
+uv run poe test-integration  # tests that need a real PrusaSlicer (skip when absent)
+uv run poe                   # list every task
 uv run prusaslicer-mcp       # run the server on stdio
 ```
 
@@ -33,7 +36,8 @@ Do not run `direnv allow` for the user.
 
 ## Working here
 
-- **TDD**: write the failing test first, then the code (see `.claude/rules/testing.md`). `uv run pytest` must pass before committing.
+- **TDD**: write the failing test first, then the code (see `.claude/rules/testing.md`). `uv run poe check` must pass before committing.
+- **Commits are Conventional Commits** (`feat: add x`, lower-case subject, header <= 72 characters); CI rejects anything else and Release Please builds releases from them.
 - Tool added/changed → update `README.md` tool table and `docs/architecture/README.md`.
 - Hard-to-reverse choice → write an ADR. Finished or newly planned work → update `ROADMAP.md`.
 - Commit/push only when asked.

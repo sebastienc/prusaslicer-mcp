@@ -14,18 +14,21 @@ When an item ships, move it to **Done** and update the README and architecture d
 - TDD as the default workflow, and Given/When/Then as the test style, both written down in `.claude/rules/testing.md`; every existing test migrated to that shape
 - PrusaSlicer projects keep their own settings: profiles are optional for a saved project, `inspect_model` reports what it stores, and the result says which settings applied ([ADR 0007](docs/decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md))
 - G-code statistics add up every extruder's filament length and volume (multi-material footers list one value per extruder)
+- Quality gates ([ADR 0009](docs/decisions/0009-quality-gate-toolchain.md)): `uv run poe check` (Ruff lint, `uv format`, `uv check`, unit tests), `uv audit`, an automated stdio protocol test, and CI with lint, types, audit, unit tests on Python 3.12 and 3.14, integration tests on macOS (PrusaSlicer download cached by version) and commitlint
+- Conventional Commits and Release Please release pull requests ([ADR 0008](docs/decisions/0008-conventional-commits-and-release-please.md))
 - Test gaps filled and mutation-checked: coverage 84% to 99% (line+branch), only `main()` uncovered (an automated stdio test is in Quality gates). The new tests exposed and fixed six problems: an opaque crash on an invalid `PRUSASLICER_MCP_TIMEOUT`, an opaque crash on a corrupt 3MF/STEP/AMF, overrides that could undo server guarantees (`binary_gcode=1`, `save`), folders created for refused requests, a made-up `0` seconds for an unrecognised print time, and a whole G-code file read into memory to check four bytes
 
 ## Next
 
-1. **Dogfood.** The server is registered for this repo through the committed `.mcp.json` (project scope). Use it on real models; note friction and fix it. Candidate gaps are tool descriptions, error messages, and defaults.
-2. **Preview rendering.** Return PNGs so Claude can *see* a model and individual sliced layers (adds `matplotlib`; needs an ADR on the rendering approach, e.g. mesh silhouette vs. parsed toolpaths).
-3. **Transforms and multi-model plates.** Expose `--rotate`, `--rotate-x/-y`, `--scale`, `--scale-to-fit`, `--dont-arrange`, `--split`, and `--merge` on `slice_model`. (`--center` shipped as the `center` option; it assumes a corner bed origin, so delta printers need a look.)
-4. **Quality gates.** CI running the unit tests on push; ruff (lint/format) and a type checker; an automated stdio protocol test (tool list, schemas, annotations) in place of the manual one.
+1. **Finish the CI setup.** These are repository settings, not code: turn on "Allow GitHub Actions to create and approve pull requests" (Release Please needs it), add a `RELEASE_PLEASE_TOKEN` personal access token so the release pull request gets CI, and make the `ci` checks required on `main`. Check the first release pull request touches exactly one line of `uv.lock`.
+2. **Dogfood.** The server is registered for this repo through the committed `.mcp.json` (project scope). Use it on real models; note friction and fix it. Candidate gaps are tool descriptions, error messages, and defaults.
+3. **Preview rendering.** Return PNGs so Claude can *see* a model and individual sliced layers (adds `matplotlib`; needs an ADR on the rendering approach, e.g. mesh silhouette vs. parsed toolpaths).
+4. **Transforms and multi-model plates.** Expose `--rotate`, `--rotate-x/-y`, `--scale`, `--scale-to-fit`, `--dont-arrange`, `--split`, and `--merge` on `slice_model`. (`--center` shipped as the `center` option; it assumes a corner bed origin, so delta printers need a look.)
 5. **Validate overrides.** Check setting keys against PrusaSlicer's real option list (`--help-fff`) so a typo fails early with a useful message instead of a slicer error.
 
 ## Later
 
+- **Linux integration tests.** Prusa no longer attaches Linux builds to its GitHub releases; the Flathub package could work, but is untried.
 - **Richer G-code analysis:** silent-mode time, first-layer time, time and filament per feature type, per-layer stats.
 - **Effective-settings introspection:** show the resolved value of a setting for a printer/print/filament combination, and explain what an override changed. Must not write into the user's PrusaSlicer data directory.
 - **3MF projects:** read per-object settings and plate layout from 3MF; slice a project as saved in the GUI; possibly write one back.
