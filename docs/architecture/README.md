@@ -54,7 +54,7 @@ tests/
 |---|---|---|
 | `list_printers(technology)` | `--query-printer-models --printer-technology {FFF,SLA}` | Flattens model → nozzle variant → printer profile. Read-only. |
 | `list_profiles(printer_profile)` | `--query-print-filament-profiles --printer-profile ...` | Print profiles with compatible filament profiles. Read-only. |
-| `inspect_model(model_path, bed_*, max_height)` | none | `trimesh` load; size, volume (only when watertight), part count, optional fit check. Rotation is not considered in the fit check. Read-only. |
+| `inspect_model(model_path, bed_*, max_height)` | none | `trimesh` load; size, volume (only when watertight), part count, optional fit check. `fits_bed` compares size only (rotation not considered). For a `.3mf` with a bed given it also warns when the stored position is off the bed, since PrusaSlicer keeps a 3MF's coordinates (see Known quirks). Read-only. |
 | `slice_model(model_path, printer_profile, print_profile, material_profile, overrides, output_path, center)` | `--export-gcode --binary-gcode=0 [--center X,Y] ...` | Writes G-code; returns path + `GcodeStats` + warnings. `center=true` looks up the bed size (`_bed_center`, via `--query-printer-models`) and centres on its middle, assuming a corner origin. Not read-only. |
 
 Profile names are exact-match; callers get them from `list_printers` / `list_profiles`.
@@ -99,7 +99,7 @@ Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `Pru
 
 ## Error handling and safety
 
-- Every expected failure (bad input, PrusaSlicer not found, timeout, slicer or query error) is raised as `ToolError`. In MCP SDK 2.x only `ToolError` text reaches the client; any other exception is a "crash" whose message is withheld (`Error executing tool <name>` only). `server._run` converts `CliTimeout`, `get_config` converts `PrusaSlicerNotFound`. A slicer "outside of the print volume" failure adds a hint to retry with `center=true`.
+- Every expected failure (bad input, PrusaSlicer not found, timeout, slicer or query error) is raised as `ToolError`. In MCP SDK 2.x only `ToolError` text reaches the client; any other exception is a "crash" whose message is withheld (`Error executing tool <name>` only). `server._run` converts `CliTimeout`, `get_config` converts `PrusaSlicerNotFound`. A slicer "outside of the print volume" failure adds a hint to retry with `center=true`, and a "profile ... wasn't found" failure (from slicing or a query) adds a hint to take exact names from `list_printers` / `list_profiles`.
 - No shell is ever involved. Subprocesses use `create_subprocess_exec` with an argument list and `stdin` closed.
 - Setting overrides: keys must match `^[a-z][a-z0-9_]*$`, values may not contain newlines, and each is emitted as one `--key=value` argument (underscores become hyphens).
 - Model paths are resolved, must exist, and must have a supported extension (`.stl .3mf .obj .amf .step .stp`).

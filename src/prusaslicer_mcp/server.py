@@ -29,6 +29,8 @@ _READ_ONLY = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHi
 
 _MODEL_SUFFIXES = {".stl", ".3mf", ".obj", ".amf", ".step", ".stp"}
 _OVERRIDE_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
+_PROFILE_NOT_FOUND = re.compile(r"profile '.*' wasn't found", re.IGNORECASE)
+_PROFILE_HINT = " (hint: profile names must match exactly; get them from list_printers and list_profiles)"
 
 _config: Config | None = None
 
@@ -50,6 +52,10 @@ async def _run(cfg: Config, args: list[str], timeout: float | None = None) -> cl
         raise ToolError(str(e)) from e
 
 
+def _with_profile_hint(detail: str) -> str:
+    return detail + _PROFILE_HINT if _PROFILE_NOT_FOUND.search(detail) else detail
+
+
 def _model_path(path: str) -> Path:
     p = Path(path).expanduser().resolve()
     if not p.is_file():
@@ -68,7 +74,8 @@ async def _query_json(args: list[str]) -> dict[str, Any]:
         # PrusaSlicer 2.9.x exits with status 1 even when a --query-* action succeeds,
         # so success is judged by the output file, not the exit code.
         if not out.is_file() or out.stat().st_size == 0:
-            raise ToolError(f"PrusaSlicer query failed (exit {result.returncode}): {result.stderr.strip() or result.stdout.strip()}")
+            detail = _with_profile_hint(result.stderr.strip() or result.stdout.strip())
+            raise ToolError(f"PrusaSlicer query failed (exit {result.returncode}): {detail}")
         try:
             return json.loads(out.read_text())
         except json.JSONDecodeError as e:
@@ -218,6 +225,17 @@ def inspect_model(
         if not fits:
             warnings.append(f"Model ({size[0]:.1f}x{size[1]:.1f}x{size[2]:.1f} mm) exceeds the build volume in at least one axis (rotation not considered).")
 
+    # PrusaSlicer places STL/OBJ itself but keeps a 3MF's stored coordinates, so a 3MF that fits by size
+    # can still sit off the bed (e.g. modelled around the origin) and fail to slice.
+    if path.suffix.lower() == ".3mf" and bed_width is not None and bed_depth is not None:
+        lo, hi = mesh.bounds
+        if lo[0] < 0 or lo[1] < 0 or hi[0] > bed_width or hi[1] > bed_depth:
+            warnings.append(
+                f"Stored position is off the bed (x {lo[0]:.1f}..{hi[0]:.1f}, y {lo[1]:.1f}..{hi[1]:.1f} mm; "
+                f"bed is 0..{bed_width:g} by 0..{bed_depth:g}). PrusaSlicer keeps a 3MF's position, so slice "
+                "it with slice_model center=true."
+            )
+
     return ModelInfo(
         path=str(path),
         triangles=int(len(mesh.faces)),
@@ -294,7 +312,7 @@ async def slice_model(
 
     result = await _run(cfg, args)
     if result.returncode != 0 or not out.is_file():
-        detail = (result.stderr.strip() or result.stdout.strip())[-2000:]
+        detail = _with_profile_hint((result.stderr.strip() or result.stdout.strip())[-2000:])
         if "outside of the print volume" in detail and not center:
             detail += " (hint: retry with center=true to place the model in the middle of the bed)"
         raise ToolError(f"Slicing failed (exit {result.returncode}): {detail}")

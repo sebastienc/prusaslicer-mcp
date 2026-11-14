@@ -82,3 +82,48 @@ async def test_missing_prusaslicer_is_readable(monkeypatch):
     monkeypatch.setattr(server, "_config", None)
     monkeypatch.setattr(server, "load_config", boom)
     assert "PRUSASLICER_PATH" in await tool_error("list_printers", {})
+
+
+@pytest.mark.parametrize(
+    "slicer_message",
+    [
+        "Error while loading config from profiles: \nPrint profile '0.20mm SPEED' wasn't found.",
+        "Error while loading config from profiles: \nPrinter profile 'Mini' wasn't found.",
+        "Error while loading config from profiles: \nFilament profile 'PLA' wasn't found.",
+    ],
+    ids=["print-profile", "printer-profile", "filament-profile"],
+)
+async def test_unknown_profile_error_points_at_the_listing_tools(fake_config, model, monkeypatch, slicer_message):
+    # Given PrusaSlicer cannot find one of the profile names it was given
+    async def fake_run(config, args, timeout=None):
+        return cli.CliResult(1, "", slicer_message)
+
+    monkeypatch.setattr(cli, "run", fake_run)
+
+    # When the model is sliced
+    msg = await tool_error(
+        "slice_model",
+        {"model_path": str(model), "printer_profile": "p", "print_profile": "q", "material_profile": "m"},
+    )
+
+    # Then the slicer's own text is kept and the caller is told where the exact names come from
+    assert "wasn't found" in msg
+    assert "list_printers" in msg and "list_profiles" in msg
+
+
+async def test_unrelated_slicer_error_gets_no_profile_hint(fake_config, model, monkeypatch):
+    # Given PrusaSlicer fails for a reason that has nothing to do with profile names
+    async def fake_run(config, args, timeout=None):
+        return cli.CliResult(1, "", "Unknown option --fill-densty")
+
+    monkeypatch.setattr(cli, "run", fake_run)
+
+    # When the model is sliced
+    msg = await tool_error(
+        "slice_model",
+        {"model_path": str(model), "printer_profile": "p", "print_profile": "q", "material_profile": "m"},
+    )
+
+    # Then the message is the slicer's text without a misleading profile hint
+    assert "Unknown option --fill-densty" in msg
+    assert "list_profiles" not in msg

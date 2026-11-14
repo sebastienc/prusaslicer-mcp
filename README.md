@@ -26,7 +26,7 @@ reads back the print time and filament use.
 |---|---|
 | `list_printers` | Installed printer models, exact printer profile names, nozzle variants, bed sizes |
 | `list_profiles` | Print (quality) profiles and compatible filament profiles for a printer profile |
-| `inspect_model` | Size, volume, watertightness, part count; optional build-volume fit check (via `trimesh`) |
+| `inspect_model` | Size, volume, watertightness, part count; optional build-volume fit check (via `trimesh`), and a warning when a 3MF's stored position is off the bed |
 | `slice_model` | Slice with `printer_profile` / `print_profile` / `material_profile`, optional setting overrides and `center`; returns G-code path, time, filament, cost, layers |
 
 Profile names must match exactly; use `list_printers` and `list_profiles` to discover them.
