@@ -406,14 +406,20 @@ def inspect_model(
 
     # PrusaSlicer places STL/OBJ itself but keeps a 3MF's stored coordinates, so a 3MF that fits by size
     # can still sit off the bed (e.g. modelled around the origin) and fail to slice.
+    project = read_project(path)
     if path.suffix.lower() == ".3mf" and bed_width is not None and bed_depth is not None:
         lo, hi = mesh.bounds
         if lo[0] < 0 or lo[1] < 0 or hi[0] > bed_width or hi[1] > bed_depth:
-            warnings.append(
+            where = (
                 f"Stored position is off the bed (x {lo[0]:.1f}..{hi[0]:.1f}, y {lo[1]:.1f}..{hi[1]:.1f} mm; "
-                f"bed is 0..{bed_width:g} by 0..{bed_depth:g}). PrusaSlicer keeps a 3MF's position, so slice "
-                "it with slice_model center=true."
+                f"bed is 0..{bed_width:g} by 0..{bed_depth:g}). PrusaSlicer keeps a 3MF's position. "
             )
+            remedy = (
+                "slice_model centres a plain 3MF on the bed automatically (center=false keeps this position)."
+                if project is None
+                else "This is a PrusaSlicer project, so slice_model keeps its layout; pass center=true to centre it."
+            )
+            warnings.append(where + remedy)
 
     return ModelInfo(
         path=str(path),
@@ -426,7 +432,7 @@ def inspect_model(
         watertight=bool(mesh.is_watertight),
         connected_parts=parts,
         fits_bed=fits,
-        project=read_project(path),
+        project=project,
         warnings=warnings,
     )
 
@@ -533,6 +539,7 @@ class SliceResult(BaseModel):
     gcode_path: str
     stats: GcodeStats
     settings_from: Literal["profiles", "project"]
+    centered: bool
     warnings: list[str]
 
 
@@ -566,13 +573,15 @@ async def slice_model(
         ),
     ] = None,
     center: Annotated[
-        bool,
+        bool | None,
         Field(
-            description="Move the model to the middle of the bed. Needed for plain 3MF files modelled around "
-            "the origin ('All objects are outside of the print volume'); STL/OBJ are placed automatically. "
-            "Leave false for 3MF projects saved from PrusaSlicer, which already hold their layout."
+            description="Move the model to the middle of the bed. Omit it to centre plain 3MF files, which are usually "
+            "modelled around the origin and otherwise fail with 'All objects are outside of the print volume', and to "
+            "leave PrusaSlicer projects (which hold their own layout) and STL/OBJ (which PrusaSlicer places itself) "
+            "alone. true centres any model; false keeps a plain 3MF where it is stored. The result says whether it was "
+            "centred."
         ),
-    ] = False,
+    ] = None,
     rotate_x: Annotated[
         float | None,
         Field(
@@ -655,12 +664,21 @@ async def slice_model(
             raise ToolError(f"Invalid override value for {key!r}")
         args.append(f"--{key.replace('_', '-')}={value}")
     args += _transform_args(rotate_x, rotate_y, rotate_z, scale, scale_to_fit, split, copies)
-    if center:
-        bed_printer = profiles[0] if profiles is not None else (project.printer_profile if project else None)
+    bed_printer = profiles[0] if profiles is not None else (project.printer_profile if project else None)
+    # Omitted means automatic: centre a plain 3MF (ADR 0013), leave projects, STL and OBJ alone.
+    automatic = center is None
+    centre = (model.suffix.lower() == ".3mf" and project is None) if automatic else center
+    centered = False
+    if centre:
         if bed_printer is None:
             raise ToolError("Cannot centre on the bed: the project does not name its printer, so pass printer_profile")
-        x, y = await _bed_center(bed_printer)
-        args += ["--center", f"{x:g},{y:g}"]
+        try:
+            x, y = await _bed_center(bed_printer)
+            args += ["--center", f"{x:g},{y:g}"]
+            centered = True
+        except ToolError:
+            if not automatic:
+                raise  # centring was asked for, so say it cannot be done; automatic centring is best effort
     # Everything is validated by now, so a refused request leaves nothing behind on disk.
     try:
         out.parent.mkdir(parents=create_all_parents, exist_ok=True)
@@ -677,7 +695,7 @@ async def slice_model(
         if result.returncode != 0 or not scratch_out.is_file():
             detail = (result.stderr.strip() or result.stdout.strip())[-2000:]
             bed_printer = profiles[0] if profiles is not None else (project.printer_profile if project else None)
-            detail = await _explain_failure(detail, model, bed_printer, center)
+            detail = await _explain_failure(detail, model, bed_printer, centered)
             raise ToolError(f"Slicing failed (exit {result.returncode}): {detail}")
         try:
             os.replace(scratch_out, out)
@@ -697,6 +715,7 @@ async def slice_model(
         gcode_path=str(out),
         stats=stats,
         settings_from="profiles" if profiles is not None else "project",
+        centered=centered,
         warnings=warnings,
     )
 

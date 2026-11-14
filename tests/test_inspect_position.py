@@ -19,7 +19,7 @@ def export_box(path, center):
 
 
 def position_warnings(info):
-    return [w for w in info.warnings if "center=true" in w]
+    return [w for w in info.warnings if "off the bed" in w]
 
 
 def test_3mf_straddling_the_origin_warns_to_center(tmp_path):
@@ -29,9 +29,11 @@ def test_3mf_straddling_the_origin_warns_to_center(tmp_path):
     # When the model is inspected against the bed
     info = server.inspect_model(str(model), **BED)
 
-    # Then it still fits by size, but the stored position is flagged with the remedy
+    # Then it still fits by size, and the stored position is flagged, saying slice_model centres it automatically
     assert info.fits_bed is True
-    assert len(position_warnings(info)) == 1
+    (warning,) = position_warnings(info)
+    assert "centres a plain 3MF" in warning
+    assert "center=false" in warning
 
 
 def test_3mf_inside_the_bed_has_no_position_warning(tmp_path):
@@ -65,3 +67,18 @@ def test_3mf_position_is_not_checked_without_a_bed(tmp_path):
 
     # Then no position warning is made up
     assert position_warnings(info) == []
+
+
+def test_a_project_off_the_bed_is_told_to_ask_for_centring(make_3mf):
+    # Given a PrusaSlicer project whose stored position is off a 180 mm bed
+    from conftest import PROJECT_CONFIG
+
+    model = make_3mf(config=PROJECT_CONFIG, at=(0.0, 0.0, 10.0))
+
+    # When it is inspected against the bed
+    info = server.inspect_model(str(model), **BED)
+
+    # Then the warning says its layout is kept, and how to centre it, since it is not centred automatically
+    (warning,) = position_warnings(info)
+    assert "PrusaSlicer project" in warning
+    assert "center=true" in warning
