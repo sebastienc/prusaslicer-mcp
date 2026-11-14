@@ -116,3 +116,24 @@ jobs:
       - uses: wagoid/commitlint-github-action@v6
         with:
           configFile: commitlint.config.mjs
+
+  # One stable check for branch protection to require. GitHub names checks after jobs, not workflows, so requiring
+  # "ci" would otherwise wait forever. This job also keeps the ruleset valid when jobs above are renamed or added.
+  ci:
+    name: ci
+    if: always()
+    needs: [lint, typecheck, audit, unit, integration, commitlint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to have succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "at least one job did not succeed" >&2
+              exit 1
+            fi
+          done
