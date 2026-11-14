@@ -842,3 +842,225 @@ async def test_no_working_files_are_left_in_the_output_folder_after_a_failure(fa
 
     # Then the output folder holds nothing
     assert leftovers(fake_prusaslicer.out_dir) == []
+
+
+# --------------------------------------------------------------------------- saying how to fix a refused slice
+
+
+@pytest.fixture
+def stl_of(tmp_path):
+    """Factory: a box STL of the given size, so the model's real size is known to the server."""
+    import trimesh
+
+    def make(x: float, y: float, z: float):
+        path = tmp_path / "sized.stl"
+        trimesh.creation.box(extents=(x, y, z)).export(path)
+        return path
+
+    return make
+
+
+def refuse(fake_prusaslicer, message: str, returncode: int = 0) -> None:
+    """Make the fake PrusaSlicer refuse with this message (exit 0 for the 'outside the print volume' kind)."""
+    fake_prusaslicer.state.writes_output = False
+    fake_prusaslicer.state.returncode = returncode
+    fake_prusaslicer.state.stdout = message
+
+
+OUTSIDE = "All objects are outside of the print volume."
+
+
+async def refusal(model, **extra) -> str:
+    with pytest.raises(ToolError) as error:
+        await slice_it(model, profiles=(MK3S, "q", "m"), **extra)
+    return str(error.value)
+
+
+async def test_a_model_larger_than_the_bed_is_told_so_with_both_sizes(fake_prusaslicer, stl_of):
+    # Given a model 300 mm long on a 250 x 210 x 210 mm bed, and PrusaSlicer refusing it
+    refuse(fake_prusaslicer, OUTSIDE)
+
+    # When it is sliced
+    message = await refusal(stl_of(300, 20, 20))
+
+    # Then the message gives both sizes and offers scale_to_fit with the bed's size, not a pointless recentre
+    assert "300.0 x 20.0 x 20.0 mm" in message
+    assert "250 x 210 x 210 mm" in message
+    assert "scale_to_fit=[250, 210, 210]" in message
+    assert "center=true" not in message
+
+
+async def test_a_model_that_fits_across_the_diagonal_is_told_to_rotate(fake_prusaslicer, stl_of):
+    # Given a model 251 mm long, a hair too long for the 250 mm side but short enough to lie across the diagonal
+    refuse(fake_prusaslicer, OUTSIDE)
+
+    # When it is sliced
+    message = await refusal(stl_of(251, 20, 20))
+
+    # Then rotate_z is suggested as well as scale_to_fit
+    assert "rotate_z=45" in message
+    assert "scale_to_fit" in message
+
+
+async def test_a_model_too_long_even_for_the_diagonal_is_not_told_to_rotate(fake_prusaslicer, stl_of):
+    # Given a model 400 mm long, which does not fit even across the bed's diagonal
+    refuse(fake_prusaslicer, OUTSIDE)
+
+    # When it is sliced
+    message = await refusal(stl_of(400, 20, 20))
+
+    # Then only scaling is suggested
+    assert "scale_to_fit" in message
+    assert "rotate_z" not in message
+
+
+async def test_a_model_too_tall_for_the_printer_is_not_told_to_rotate_flat(fake_prusaslicer, stl_of):
+    # Given a model 300 mm tall on a printer that prints 210 mm high
+    refuse(fake_prusaslicer, OUTSIDE)
+
+    # When it is sliced
+    message = await refusal(stl_of(20, 20, 300))
+
+    # Then it says so and offers scale_to_fit, but not rotate_z, which cannot help
+    assert "20.0 x 20.0 x 300.0 mm" in message
+    assert "scale_to_fit" in message
+    assert "rotate_z" not in message
+
+
+async def test_a_model_that_fits_the_bed_is_told_to_centre_it(fake_prusaslicer, stl_of):
+    # Given a small model that PrusaSlicer still refuses as outside the volume (it sits off the bed)
+    refuse(fake_prusaslicer, OUTSIDE)
+
+    # When it is sliced without centring
+    message = await refusal(stl_of(20, 20, 20), center=False)
+
+    # Then the advice is the original one: centre it
+    assert "center=true" in message
+    assert "scale_to_fit" not in message
+
+
+async def test_no_centre_advice_when_it_is_already_centred_and_fits(fake_prusaslicer, stl_of):
+    # Given a small model that is refused even though centring was asked for
+    refuse(fake_prusaslicer, OUTSIDE)
+
+    # When it is sliced with centring on
+    message = await refusal(stl_of(20, 20, 20), center=True)
+
+    # Then no hint is invented: the message is PrusaSlicer's own
+    assert message.endswith(OUTSIDE)
+
+
+async def test_when_the_bed_is_unknown_the_centre_advice_is_still_given(fake_prusaslicer, model):
+    # Given an unreadable model and a printer profile the server cannot look up, so no sizes are known
+    refuse(fake_prusaslicer, OUTSIDE)
+
+    # When it is sliced
+    with pytest.raises(ToolError) as error:
+        await slice_it(model)  # the stub model and the "Mini" profile
+
+    # Then the original centre advice is the fallback, and PrusaSlicer's message is intact
+    assert "center=true" in str(error.value)
+    assert OUTSIDE in str(error.value)
+
+
+async def test_an_empty_first_layer_points_to_the_preview_and_to_rotating(fake_prusaslicer, model):
+    # Given PrusaSlicer refusing a model whose lowest layer has nothing to print
+    refuse(
+        fake_prusaslicer,
+        "There is an object with no extrusions in the first layer.\nObject name: scan.stl",
+        returncode=1,
+    )
+
+    # When it is sliced
+    with pytest.raises(ToolError) as error:
+        await slice_it(model)
+
+    # Then the message explains the likely causes and the tools to use
+    message = str(error.value)
+    assert "no extrusions in the first layer" in message
+    assert "preview_model" in message
+    assert "rotate_x" in message
+    assert "repair" in message
+
+
+async def test_the_wipe_tower_conflict_names_the_override_that_fixes_it(fake_prusaslicer, make_3mf):
+    # Given a project whose settings combine a wipe tower with sequential printing, which PrusaSlicer refuses
+    refuse(fake_prusaslicer, "The Wipe Tower is currently not supported for multimaterial sequential prints.")
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced as saved
+    with pytest.raises(ToolError) as error:
+        await slice_it(project, profiles=NO_PROFILES)
+
+    # Then the message says it is the project's own settings and names the overrides that resolve it
+    message = str(error.value)
+    assert "overrides" in message
+    assert '"wipe_tower": "0"' in message
+
+
+async def test_an_unrelated_refusal_gets_no_invented_advice(fake_prusaslicer, model):
+    # Given PrusaSlicer refusing for a reason we have no advice for
+    refuse(fake_prusaslicer, "Something entirely different went wrong.", returncode=1)
+
+    # When it is sliced
+    with pytest.raises(ToolError) as error:
+        await slice_it(model)
+
+    # Then the message is PrusaSlicer's own, with none of our hints
+    message = str(error.value)
+    for hint_word in ("center=true", "scale_to_fit", "preview_model", "overrides"):
+        assert hint_word not in message
+
+
+async def test_a_printer_with_no_height_limit_is_described_without_one(fake_prusaslicer, stl_of, monkeypatch):
+    # Given a printer profile whose bed has a width and depth but no maximum print height
+    refuse(fake_prusaslicer, OUTSIDE)
+
+    async def no_height(printer_profile):
+        return 250.0, 210.0, float("inf")
+
+    monkeypatch.setattr(server, "_bed_size", no_height)
+
+    # When an oversized model is sliced on it
+    message = await refusal(stl_of(300, 20, 20))
+
+    # Then the bed is described by width and depth only, and the height is left as the model's own
+    assert "250 x 210 mm" in message
+    assert "inf" not in message
+    assert "scale_to_fit=[250, 210, 20]" in message
+
+
+async def test_a_model_that_fits_when_turned_a_quarter_is_not_called_too_big(fake_prusaslicer, stl_of):
+    # Given a model 205 x 240 mm on a 250 x 210 mm bed: too deep as it lies, but it fits turned 90 degrees
+    refuse(fake_prusaslicer, OUTSIDE)
+
+    # When it is refused as outside the volume
+    message = await refusal(stl_of(205, 240, 20), center=False)
+
+    # Then it is not blamed on size, because it can fit: the advice is to centre it
+    assert "center=true" in message
+    assert "scale_to_fit" not in message
+
+
+async def test_a_project_that_does_not_name_its_printer_still_gets_the_centre_advice(fake_prusaslicer, make_3mf):
+    # Given a project whose configuration has no printer profile name, refused as outside the volume
+    refuse(fake_prusaslicer, OUTSIDE)
+    project = make_3mf(config="; fill_density = 20%\n")
+
+    # When it is sliced as saved
+    with pytest.raises(ToolError) as error:
+        await slice_it(project, profiles=NO_PROFILES)
+
+    # Then there is no bed to compare with, so the original centre advice is given
+    assert "center=true" in str(error.value)
+
+
+async def test_no_centre_advice_when_sizes_are_unknown_and_it_was_already_centred(fake_prusaslicer, model):
+    # Given an unreadable model (so its size is unknown) on a known printer, refused even though centring was asked for
+    refuse(fake_prusaslicer, OUTSIDE)
+
+    # When it is sliced with centring on
+    message = await refusal(model, center=True)
+
+    # Then telling the caller to centre it would be wrong: the message is PrusaSlicer's own
+    assert message.endswith(OUTSIDE)

@@ -324,3 +324,20 @@ async def test_a_refused_slice_does_not_reuse_the_file_from_an_earlier_slice(ori
 
     # Then it is reported as a failure and the earlier file is left exactly as it was
     assert target.read_bytes() == earlier
+
+
+async def test_a_refused_oversized_model_says_how_big_it_is_and_what_to_do(tmp_path, installed):
+    # Given a model a metre long, far larger than any bed
+    model = tmp_path / "huge.stl"
+    trimesh.creation.box(extents=(1000, 20, 20)).export(model)
+
+    # When it is sliced with real profiles
+    with pytest.raises(ToolError) as error:
+        await server.slice_model(str(model), installed.printer, installed.print_profile, installed.filament)
+
+    # Then PrusaSlicer's refusal comes with the model's size and a scale_to_fit remedy, not a pointless recentre
+    message = str(error.value)
+    assert "outside of the print volume" in message
+    assert "1000.0 x 20.0 x 20.0 mm" in message
+    assert "scale_to_fit=[" in message
+    assert "center=true" not in message

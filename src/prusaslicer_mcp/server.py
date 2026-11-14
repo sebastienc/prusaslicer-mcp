@@ -82,6 +82,56 @@ def _with_profile_hint(detail: str) -> str:
     return detail + _PROFILE_HINT if _PROFILE_NOT_FOUND.search(detail) else detail
 
 
+# Refusals PrusaSlicer words tersely, with what to try. Each was met slicing real models and the remedy was verified.
+_STATIC_HINTS = (
+    (
+        re.compile(r"no extrusions in the first layer", re.IGNORECASE),
+        " (hint: the model's lowest layer has nothing to print, usually because its underside is open, as in many "
+        "scans, or it rests on a point. Look at it with preview_model, then try rotate_x or rotate_y to put a flat, "
+        "closed face down, or repair the mesh)",
+    ),
+    (
+        re.compile(r"wipe tower is currently not supported for multimaterial sequential", re.IGNORECASE),
+        " (hint: this is a conflict in the project's own settings. Change one with overrides, for example "
+        '{"wipe_tower": "0"} or {"complete_objects": "0"})',
+    ),
+)
+
+
+async def _outside_volume_hint(model: Path, printer_profile: str | None, centred: bool) -> str:
+    """Say why a model is outside the print volume when we can tell: too big for the bed, or just off it."""
+    centre_hint = " (hint: retry with center=true to place the model in the middle of the bed)"
+    if printer_profile is not None:
+        try:
+            x, y, z = (float(v) for v in _load_mesh(model).extents)
+            width, depth, height = await _bed_size(printer_profile)
+        except ToolError:
+            return "" if centred else centre_hint  # sizes unknown: the position is the likeliest cause
+        too_big = z > height or not ((x <= width and y <= depth) or (x <= depth and y <= width))
+        if too_big:
+            fits_diagonally = z <= height and (x + y) / math.sqrt(2) <= min(width, depth)
+            limit_z = height if math.isfinite(height) else z  # no height limit known: leave the height alone
+            bed = f"{width:g} x {depth:g}" + (f" x {height:g}" if math.isfinite(height) else "")
+            fit = f"scale_to_fit=[{width:g}, {depth:g}, {limit_z:g}]"
+            rotate = " or rotate_z=45 to lay it across the bed's diagonal" if fits_diagonally else ""
+            return (
+                f" (hint: the model is {x:.1f} x {y:.1f} x {z:.1f} mm but the bed is {bed} mm. "
+                f"Use {fit} to shrink it{rotate})"
+            )
+    return "" if centred else centre_hint
+
+
+async def _explain_failure(detail: str, model: Path, printer_profile: str | None, centred: bool) -> str:
+    """PrusaSlicer's own message plus advice for the refusals we know how to resolve."""
+    detail = _with_profile_hint(detail)
+    for pattern, hint in _STATIC_HINTS:
+        if pattern.search(detail):
+            detail += hint
+    if "outside of the print volume" in detail:
+        detail += await _outside_volume_hint(model, printer_profile, centred)
+    return detail
+
+
 def _chosen_profiles(
     printer: str | None, print_: str | None, material: str | None, project: ProjectInfo | None
 ) -> tuple[str, str, str] | None:
@@ -225,19 +275,27 @@ def _display_name(name: str) -> str:
     return name.replace("&&", "&")
 
 
-async def _bed_center(printer_profile: str) -> tuple[float, float]:
-    """Middle of the bed for a known FFF printer profile (assumes the bed origin is a corner)."""
+async def _bed_size(printer_profile: str) -> tuple[float, float, float]:
+    """Width, depth and maximum print height of a known FFF printer profile's bed, in mm."""
     data = await _query_json(["--query-printer-models", "--printer-technology", "FFF"])
     for m in data.get("printer_models", []):
         for v in m.get("variants", []):
             for p in v.get("printer_profiles", []):
                 bed = p.get("bed", {})
                 if p.get("name") == printer_profile and bed.get("width") and bed.get("height"):
-                    return bed["width"] / 2, bed["height"] / 2
+                    return bed["width"], bed["height"], bed.get("max_print_height") or float("inf")
     raise ToolError(
-        f"Cannot centre on the bed: printer profile {printer_profile!r} was not found with a bed size. "
-        "Use the exact name from list_printers."
+        f"printer profile {printer_profile!r} was not found with a bed size; use the exact name from list_printers"
     )
+
+
+async def _bed_center(printer_profile: str) -> tuple[float, float]:
+    """Middle of the bed for a known FFF printer profile (assumes the bed origin is a corner)."""
+    try:
+        width, depth, _ = await _bed_size(printer_profile)
+    except ToolError as e:
+        raise ToolError(f"Cannot centre on the bed: {e}") from e
+    return width / 2, depth / 2
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -617,9 +675,9 @@ async def slice_model(
         scratch_out = Path(scratch_dir) / out.name
         result = await _run(cfg, [*args, "--output", str(scratch_out), str(model)])
         if result.returncode != 0 or not scratch_out.is_file():
-            detail = _with_profile_hint((result.stderr.strip() or result.stdout.strip())[-2000:])
-            if "outside of the print volume" in detail and not center:
-                detail += " (hint: retry with center=true to place the model in the middle of the bed)"
+            detail = (result.stderr.strip() or result.stdout.strip())[-2000:]
+            bed_printer = profiles[0] if profiles is not None else (project.printer_profile if project else None)
+            detail = await _explain_failure(detail, model, bed_printer, center)
             raise ToolError(f"Slicing failed (exit {result.returncode}): {detail}")
         try:
             os.replace(scratch_out, out)
