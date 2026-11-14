@@ -569,3 +569,212 @@ async def test_a_slice_without_gaps_adds_no_empty_stretch_warning(fake_prusaslic
 
     # Then there are no warnings
     assert result.warnings == []
+
+
+# --------------------------------------------------------------------------- transforms (ADR 0012)
+
+
+async def sliced_with(fake_prusaslicer, model, **extra) -> list[str]:
+    await slice_it(model, **extra)
+    return fake_prusaslicer.calls[0]  # slice_it accepts a `profiles=` override too
+
+
+async def test_no_transform_flags_are_passed_unless_asked_for(fake_prusaslicer, model):
+    # Given no transform parameters
+
+    # When the model is sliced
+    args = await sliced_with(fake_prusaslicer, model)
+
+    # Then none of PrusaSlicer's transform flags appear
+    transform_flags = ("--rotate", "--rotate-x", "--rotate-y", "--scale", "--scale-to-fit", "--split", "--duplicate")
+    assert not any(flag in args for flag in transform_flags)
+
+
+@pytest.mark.parametrize(
+    ("parameter", "flag"),
+    [("rotate_x", "--rotate-x"), ("rotate_y", "--rotate-y"), ("rotate_z", "--rotate")],
+    ids=["x", "y", "z-is-plain-rotate"],
+)
+@pytest.mark.parametrize(("degrees", "text"), [(90, "90"), (-90, "-90"), (12.5, "12.5"), (0, "0")])
+async def test_each_rotation_becomes_its_prusaslicer_flag_in_degrees(
+    fake_prusaslicer, model, parameter, flag, degrees, text
+):
+    # Given a rotation about one axis
+    extra = {parameter: degrees}
+
+    # When the model is sliced
+    args = await sliced_with(fake_prusaslicer, model, **extra)
+
+    # Then PrusaSlicer is given that flag with the angle
+    assert args[args.index(flag) + 1] == text
+
+
+async def test_all_three_rotations_can_be_combined(fake_prusaslicer, model):
+    # Given rotations about all three axes
+
+    # When the model is sliced
+    args = await sliced_with(fake_prusaslicer, model, rotate_x=90, rotate_y=45, rotate_z=10)
+
+    # Then all three flags are passed
+    assert args[args.index("--rotate-x") + 1] == "90"
+    assert args[args.index("--rotate-y") + 1] == "45"
+    assert args[args.index("--rotate") + 1] == "10"
+
+
+@pytest.mark.parametrize("parameter", ["rotate_x", "rotate_y", "rotate_z"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")], ids=["nan", "infinity"])
+async def test_a_rotation_that_is_not_a_finite_number_is_refused(fake_prusaslicer, model, parameter, value):
+    # Given an angle that is not a number
+
+    # When / Then slicing is refused and PrusaSlicer is never started
+    with pytest.raises(ToolError, match="finite"):
+        await slice_it(model, **{parameter: value})
+    assert fake_prusaslicer.calls == []
+
+
+@pytest.mark.parametrize(("factor", "text"), [(2, "2"), (0.5, "0.5"), (1.25, "1.25")])
+async def test_scale_is_passed_as_a_factor(fake_prusaslicer, model, factor, text):
+    # Given a scale factor, where 0.5 means half size
+
+    # When the model is sliced
+    args = await sliced_with(fake_prusaslicer, model, scale=factor)
+
+    # Then PrusaSlicer is given the plain factor, never a percentage, which it would read differently
+    assert args[args.index("--scale") + 1] == text
+
+
+@pytest.mark.parametrize("factor", [0, -1, -0.5])
+async def test_a_scale_that_is_not_positive_is_refused(fake_prusaslicer, model, factor):
+    # Given a zero or negative scale
+
+    # When / Then slicing is refused and PrusaSlicer is never started
+    with pytest.raises(ToolError, match="greater than 0"):
+        await slice_it(model, scale=factor)
+    assert fake_prusaslicer.calls == []
+
+
+async def test_scale_to_fit_passes_the_box_in_millimetres(fake_prusaslicer, model):
+    # Given a box to fit the model into
+
+    # When the model is sliced
+    args = await sliced_with(fake_prusaslicer, model, scale_to_fit=[180, 180, 150.5])
+
+    # Then PrusaSlicer is given the three sizes
+    assert args[args.index("--scale-to-fit") + 1] == "180,180,150.5"
+
+
+@pytest.mark.parametrize("box", [[10, 10], [10, 10, 10, 10], []], ids=["two", "four", "none"])
+async def test_scale_to_fit_needs_exactly_three_sizes(fake_prusaslicer, model, box):
+    # Given a box with the wrong number of sizes
+
+    # When / Then slicing is refused and PrusaSlicer is never started
+    with pytest.raises(ToolError, match="3"):
+        await slice_it(model, scale_to_fit=box)
+    assert fake_prusaslicer.calls == []
+
+
+@pytest.mark.parametrize("box", [[0, 10, 10], [10, -5, 10], [10, 10, 0]], ids=["x", "y", "z"])
+async def test_scale_to_fit_sizes_must_be_positive(fake_prusaslicer, model, box):
+    # Given a box with a zero or negative size
+
+    # When / Then slicing is refused naming the problem
+    with pytest.raises(ToolError, match="positive"):
+        await slice_it(model, scale_to_fit=box)
+    assert fake_prusaslicer.calls == []
+
+
+async def test_scale_and_scale_to_fit_cannot_be_combined(fake_prusaslicer, model):
+    # Given both ways of resizing at once
+
+    # When / Then slicing is refused, saying to choose one
+    with pytest.raises(ToolError, match="scale or scale_to_fit"):
+        await slice_it(model, scale=2, scale_to_fit=[100, 100, 100])
+    assert fake_prusaslicer.calls == []
+
+
+async def test_split_asks_prusaslicer_to_separate_unconnected_parts(fake_prusaslicer, model):
+    # Given split is on
+
+    # When the model is sliced
+    args = await sliced_with(fake_prusaslicer, model, split=True)
+
+    # Then the flag is passed
+    assert "--split" in args
+
+
+@pytest.mark.parametrize(("count", "text"), [(1, "1"), (3, "3"), (100, "100")])
+async def test_copies_become_the_number_of_objects_on_the_plate(fake_prusaslicer, model, count, text):
+    # Given a number of copies, which PrusaSlicer treats as the total number of objects
+
+    # When the model is sliced
+    args = await sliced_with(fake_prusaslicer, model, copies=count)
+
+    # Then PrusaSlicer is given that number
+    assert args[args.index("--duplicate") + 1] == text
+
+
+@pytest.mark.parametrize("count", [0, -2, 101])
+async def test_a_number_of_copies_outside_one_to_a_hundred_is_refused(fake_prusaslicer, model, count):
+    # Given a number of copies that makes no sense
+
+    # When / Then slicing is refused and PrusaSlicer is never started
+    with pytest.raises(ToolError, match=r"1|100"):
+        await slice_it(model, copies=count)
+    assert fake_prusaslicer.calls == []
+
+
+async def test_transforms_apply_to_a_project_sliced_with_its_own_settings(fake_prusaslicer, make_3mf):
+    # Given a PrusaSlicer project and no profiles
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced rotated and scaled
+    await slice_it(project, profiles=NO_PROFILES, rotate_x=90, scale=0.5)
+
+    # Then the transforms are passed and still no profile flags are
+    args = fake_prusaslicer.calls[0]
+    assert "--rotate-x" in args
+    assert "--scale" in args
+    assert not any(flag in args for flag in PROFILE_FLAGS)
+
+
+async def test_transforms_work_together_with_centring(fake_prusaslicer, model):
+    # Given a rotation and centring on the bed of a printer whose bed size is known
+
+    # When the model is sliced
+    args = await sliced_with(fake_prusaslicer, model, profiles=(MK3S, "q", "m"), rotate_x=90, center=True)
+
+    # Then both are passed
+    assert "--rotate-x" in args
+    assert "--center" in args
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"scale": 0}, {"scale_to_fit": [1, 2]}, {"copies": 0}, {"scale": 2, "scale_to_fit": [1, 1, 1]}],
+    ids=["scale", "fit-box", "copies", "scale-and-fit"],
+)
+async def test_a_refused_transform_creates_no_folders(fake_prusaslicer, model, extra):
+    # Given a transform request that will be refused, with an output path in folders that do not exist
+    target = fake_prusaslicer.tmp / "should-not-exist" / "result.gcode"
+
+    # When / Then it is refused
+    with pytest.raises(ToolError):
+        await slice_it(model, output_path=str(target), **extra)
+
+    # And nothing was created on disk for it
+    assert not target.parent.exists()
+
+
+async def test_the_model_stays_last_on_the_command_line_whatever_transforms_are_asked_for(fake_prusaslicer, model):
+    # Given every transform at once
+
+    # When the model is sliced
+    args = await sliced_with(
+        fake_prusaslicer, model, rotate_x=90, rotate_y=1, rotate_z=2, scale=0.5, split=True, copies=2, center=False
+    )
+
+    # Then the command still ends with --output <file> <model>, with every transform flag before it
+    assert args[-3] == "--output"
+    assert args[-1] == str(model.resolve())
+    for flag in ("--rotate-x", "--rotate-y", "--rotate", "--scale", "--split", "--duplicate"):
+        assert args.index(flag) < len(args) - 3

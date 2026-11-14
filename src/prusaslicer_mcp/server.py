@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import tempfile
 from pathlib import Path
@@ -112,6 +113,52 @@ def _load_mesh(path: Path) -> trimesh.Trimesh:
     if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
         raise ToolError("Could not load a triangle mesh from this file.")
     return mesh
+
+
+def _transform_args(
+    rotate_x: float | None,
+    rotate_y: float | None,
+    rotate_z: float | None,
+    scale: float | None,
+    scale_to_fit: list[float] | None,
+    split: bool,
+    copies: int | None,
+) -> list[str]:
+    """PrusaSlicer's transform flags for the requested changes, validated (ADR 0012).
+
+    PrusaSlicer applies them in its own fixed order whatever order they are passed: rotate about X, then Y, then
+    Z, then scale. `--scale` takes a factor, and a bare `50` would mean fifty times, so only factors are accepted.
+    """
+    args: list[str] = []
+    for name, flag, degrees in (
+        ("rotate_x", "--rotate-x", rotate_x),
+        ("rotate_y", "--rotate-y", rotate_y),
+        ("rotate_z", "--rotate", rotate_z),
+    ):
+        if degrees is None:
+            continue
+        if not math.isfinite(degrees):
+            raise ToolError(f"{name} must be a finite number of degrees")
+        args += [flag, f"{degrees:g}"]
+    if scale is not None and scale_to_fit is not None:
+        raise ToolError("Use either scale or scale_to_fit, not both")
+    if scale is not None:
+        if not math.isfinite(scale) or scale <= 0:
+            raise ToolError("scale must be a factor greater than 0 (0.5 is half size, 2 is double)")
+        args += ["--scale", f"{scale:g}"]
+    if scale_to_fit is not None:
+        if len(scale_to_fit) != 3:
+            raise ToolError("scale_to_fit needs exactly 3 sizes in millimetres: [x, y, z]")
+        if not all(math.isfinite(size) and size > 0 for size in scale_to_fit):
+            raise ToolError("scale_to_fit sizes must all be positive")
+        args += ["--scale-to-fit", ",".join(f"{size:g}" for size in scale_to_fit)]
+    if split:
+        args.append("--split")
+    if copies is not None:
+        if not 1 <= copies <= 100:
+            raise ToolError("copies must be between 1 and 100")
+        args += ["--duplicate", str(copies)]
+    return args
 
 
 def _model_path(path: str) -> Path:
@@ -467,6 +514,49 @@ async def slice_model(
             "Leave false for 3MF projects saved from PrusaSlicer, which already hold their layout."
         ),
     ] = False,
+    rotate_x: Annotated[
+        float | None,
+        Field(
+            description="Degrees to rotate about the X axis. PrusaSlicer applies rotations in the fixed order X, then Y, "
+            "then Z, whatever order you think of them. 90 or -90 stands a model that lies along Y upright, e.g. a Y-up "
+            "scan (check with preview_model first)."
+        ),
+    ] = None,
+    rotate_y: Annotated[
+        float | None, Field(description="Degrees to rotate about the Y axis (applied after rotate_x).")
+    ] = None,
+    rotate_z: Annotated[
+        float | None, Field(description="Degrees to rotate about the vertical Z axis (applied last).")
+    ] = None,
+    scale: Annotated[
+        float | None,
+        Field(
+            gt=0, description="Scale factor: 0.5 is half size, 2 is double. Not a percentage. Not with scale_to_fit."
+        ),
+    ] = None,
+    scale_to_fit: Annotated[
+        list[float] | None,
+        Field(
+            min_length=3,
+            max_length=3,
+            description="[x, y, z] in mm: scale the model uniformly to fit inside this box, e.g. the bed size. Not with scale.",
+        ),
+    ] = None,
+    split: Annotated[
+        bool,
+        Field(
+            description="Separate unconnected solids into their own objects, which PrusaSlicer then arranges "
+            "compactly on the bed."
+        ),
+    ] = False,
+    copies: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=100,
+            description="Total number of objects to print, arranged automatically on the bed (3 prints three of this model).",
+        ),
+    ] = None,
 ) -> SliceResult:
     """Slice a model headlessly and return the G-code path plus print time, filament use and layer count.
     Uses the given installed profiles, or, for a PrusaSlicer project 3MF with no profiles given, the settings
@@ -505,6 +595,7 @@ async def slice_model(
         if "\n" in value or "\r" in value:
             raise ToolError(f"Invalid override value for {key!r}")
         args.append(f"--{key.replace('_', '-')}={value}")
+    args += _transform_args(rotate_x, rotate_y, rotate_z, scale, scale_to_fit, split, copies)
     if center:
         bed_printer = profiles[0] if profiles is not None else (project.printer_profile if project else None)
         if bed_printer is None:
