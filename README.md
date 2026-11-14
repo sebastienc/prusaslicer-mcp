@@ -53,7 +53,7 @@ In VS Code, open `prusaslicer-mcp.code-workspace` (interpreter, pytest, tasks, d
 |---|---|---|
 | `PRUSASLICER_PATH` | PrusaSlicer executable | auto-detected (`PATH`, `/Applications/**/PrusaSlicer.app`, ...) |
 | `PRUSASLICER_DATADIR` | Profile/config directory | platform default |
-| `PRUSASLICER_MCP_OUTPUT_DIR` | Where G-code goes when no output path is given | `./output` |
+| `PRUSASLICER_MCP_OUTPUT_DIR` | Where G-code goes when no output path is given; created in full if missing | `./output` |
 | `PRUSASLICER_MCP_TIMEOUT` | Slice timeout (seconds, must be positive) | `600` |
 
 ## Register with Claude Code
@@ -81,6 +81,7 @@ Code asks you to approve project-scoped servers the first time; `claude mcp list
 - Plain 3MF files (exported from CAD, not saved from PrusaSlicer) keep their stored coordinates, so a part modelled around the origin sits half off the bed and slicing fails with "All objects are outside of the print volume". Pass `center=true` to `slice_model` to place it in the middle of the bed. STL/OBJ files are placed automatically, and 3MF projects saved from PrusaSlicer should be sliced with `center=false` to keep their layout.
 
 - `--query-*` actions exit with status 1 on success in 2.9.7; the server judges them by their output file.
+- `slice_model`'s `output_path` may create its last folder only; if the folder above it does not exist the call is refused, because that is almost always a typo.
 - Setting overrides use PrusaSlicer config option names, e.g. `{"fill_density": "25%"}` (see `PrusaSlicer --help-fff`). Options the server sets itself (profiles, output, `binary_gcode`, `datadir`, `save`) are rejected.
 
 ## Limitations

@@ -289,7 +289,7 @@ async def slice_model(
         dict[str, str] | None,
         Field(description="Optional PrusaSlicer settings, e.g. {'fill_density': '25%', 'perimeters': '3'}. Keys are config option names (see PrusaSlicer --help-fff); options the server sets itself (profiles, output, binary_gcode, datadir, save) are rejected."),
     ] = None,
-    output_path: Annotated[str | None, Field(description="Where to write the G-code (default: <output dir>/<model>.gcode)")] = None,
+    output_path: Annotated[str | None, Field(description="Where to write the G-code (default: <output dir>/<model>.gcode). Its folder is created if missing, but only that one level: the folder above it must already exist.")] = None,
     center: Annotated[
         bool,
         Field(
@@ -315,7 +315,22 @@ async def slice_model(
     elif any(p is None for p in profiles):
         raise ToolError("Give all three profiles (printer_profile, print_profile, material_profile) or none")
 
-    out = Path(output_path).expanduser().resolve() if output_path else cfg.output_dir / f"{model.stem}.gcode"
+    if output_path:
+        out = Path(output_path).expanduser().resolve()
+        # A caller-supplied path may create only its last folder: reaching further is almost always a typo, and
+        # silently building a tree for it hides the mistake. The configured output directory is the user's own
+        # setting, so that one is created in full.
+        if out.parent.exists() and not out.parent.is_dir():
+            raise ToolError(f"Cannot write {out}: {out.parent} is not a folder")
+        if not out.parent.is_dir() and not out.parent.parent.is_dir():
+            raise ToolError(
+                f"Cannot write {out}: neither its folder nor that folder's parent exists. "
+                "Use an existing folder, or one level below it."
+            )
+        create_all_parents = False
+    else:
+        out = cfg.output_dir / f"{model.stem}.gcode"
+        create_all_parents = True
 
     args = ["--export-gcode", "--binary-gcode=0"]
     if printer_profile is not None:
@@ -337,7 +352,10 @@ async def slice_model(
     args += ["--output", str(out), str(model)]
 
     # Everything is validated by now, so a refused request leaves nothing behind on disk.
-    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        out.parent.mkdir(parents=create_all_parents, exist_ok=True)
+    except OSError as e:
+        raise ToolError(f"Cannot create the output folder {out.parent}: {e}") from e
     result = await _run(cfg, args)
     if result.returncode != 0 or not out.is_file():
         detail = _with_profile_hint((result.stderr.strip() or result.stdout.strip())[-2000:])

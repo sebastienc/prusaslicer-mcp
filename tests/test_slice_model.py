@@ -5,6 +5,7 @@ failure reporting are the real code under test.
 """
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -167,20 +168,21 @@ async def test_gcode_defaults_to_the_output_directory_named_after_the_model(prus
     assert (prusaslicer.out_dir / "part.gcode").is_file()
 
 
-async def test_explicit_output_path_is_used_and_its_folders_are_created(prusaslicer, model):
-    # Given an output path inside folders that do not exist yet
-    target = prusaslicer.tmp / "deep" / "er" / "result.gcode"
+async def test_explicit_output_path_is_used_and_its_last_folder_is_created(prusaslicer, model):
+    # Given an output path whose folder does not exist yet, inside a folder that does
+    target = prusaslicer.tmp / "results" / "result.gcode"
 
     # When the model is sliced
     result = await slice_it(model, output_path=str(target))
 
-    # Then the G-code is written exactly there
+    # Then the G-code is written exactly there, and that one folder was created for it
     assert result.gcode_path == str(target)
     assert target.is_file()
 
 
 async def test_tilde_in_output_path_is_expanded(prusaslicer, model, monkeypatch):
-    # Given an output path written relative to the home directory
+    # Given an output path written relative to a home directory that exists
+    (prusaslicer.tmp / "home").mkdir()
     monkeypatch.setenv("HOME", str(prusaslicer.tmp / "home"))
 
     # When the model is sliced
@@ -411,3 +413,68 @@ async def test_empty_profile_names_count_as_given_profiles_and_are_left_for_prus
     # Then they are passed on as profiles (not silently replaced by the project's settings)
     assert result.settings_from == "profiles"
     assert prusaslicer.calls[0][prusaslicer.calls[0].index("--printer-profile") + 1] == ""
+
+
+# --------------------------------------------------------------------------- how far an output path may reach
+
+
+async def test_an_output_path_two_folders_deep_is_refused_because_it_is_probably_a_typo(prusaslicer, model):
+    # Given an output path where neither its folder nor that folder's parent exists
+    target = prusaslicer.tmp / "typo" / "also-typo" / "result.gcode"
+
+    # When / Then it is refused with a message that names the path, and PrusaSlicer is never started
+    with pytest.raises(ToolError, match=r"Cannot write .*result\.gcode.*neither"):
+        await slice_it(model, output_path=str(target))
+    assert prusaslicer.calls == []
+
+
+async def test_a_refused_deep_output_path_creates_no_folders(prusaslicer, model):
+    # Given the same too-deep output path
+    target = prusaslicer.tmp / "typo" / "also-typo" / "result.gcode"
+
+    # When it is refused
+    with pytest.raises(ToolError):
+        await slice_it(model, output_path=str(target))
+
+    # Then nothing was created on disk
+    assert not (prusaslicer.tmp / "typo").exists()
+
+
+async def test_an_output_folder_that_is_a_file_is_refused(prusaslicer, model):
+    # Given a path whose "folder" is actually a regular file
+    blocker = prusaslicer.tmp / "not-a-folder"
+    blocker.write_text("x")
+
+    # When / Then slicing is refused readably, and PrusaSlicer is never started
+    with pytest.raises(ToolError, match="not a folder"):
+        await slice_it(model, output_path=str(blocker / "result.gcode"))
+    assert prusaslicer.calls == []
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores folder permissions")
+async def test_a_folder_that_cannot_be_created_is_a_readable_failure(prusaslicer, model):
+    # Given a read-only folder, so creating a folder inside it is not allowed
+    locked = prusaslicer.tmp / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+
+    # When / Then slicing fails with a message naming the folder, not an opaque crash
+    try:
+        with pytest.raises(ToolError, match="Cannot create the output folder"):
+            await slice_it(model, output_path=str(locked / "new" / "result.gcode"))
+    finally:
+        locked.chmod(0o700)
+    assert prusaslicer.calls == []
+
+
+async def test_the_configured_output_directory_is_created_however_deep_it_is(prusaslicer, model, monkeypatch):
+    # Given an output directory set in the configuration that is several levels below an existing folder
+    deep = prusaslicer.tmp / "a" / "b" / "c"
+    monkeypatch.setattr(server, "_config", server.get_config().__class__(
+        executable=server.get_config().executable, datadir=None, output_dir=deep, timeout=5))
+
+    # When the model is sliced without an output path
+    result = await slice_it(model)
+
+    # Then the whole configured directory is created, because that path is the user's own setting
+    assert result.gcode_path == str(deep / "part.gcode")
