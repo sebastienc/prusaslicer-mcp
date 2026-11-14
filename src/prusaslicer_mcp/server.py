@@ -17,6 +17,7 @@ from . import cli
 from .config import Config, ConfigError, load_config
 from .gcode import GcodeStats, parse_gcode_stats
 from .project import ProjectInfo, read_project
+from .slicer_output import parse_warnings
 
 mcp = MCPServer(
     "prusaslicer",
@@ -404,7 +405,7 @@ async def slice_model(
             detail += " (hint: retry with center=true to place the model in the middle of the bed)"
         raise ToolError(f"Slicing failed (exit {result.returncode}): {detail}")
 
-    warnings = [line.strip() for line in result.stdout.splitlines() if "warning" in line.lower()]
+    warnings = parse_warnings(result.stdout)
     try:
         stats = parse_gcode_stats(out)
     except ValueError as e:
