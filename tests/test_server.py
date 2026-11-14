@@ -309,3 +309,18 @@ async def test_a_plain_3mf_can_be_rotated_and_centred_together(origin_cube_3mf, 
 
     # Then it slices
     assert result.stats.layer_count
+
+
+async def test_a_refused_slice_does_not_reuse_the_file_from_an_earlier_slice(origin_cube_3mf, installed, tmp_path):
+    # Given a good slice already written to a path (centred, so PrusaSlicer accepts it)
+    target = tmp_path / "same.gcode"
+    args = (str(origin_cube_3mf), installed.printer, installed.print_profile, installed.filament)
+    await server.slice_model(*args, center=True, output_path=str(target))
+    earlier = target.read_bytes()
+
+    # When the same model is sliced to the same path without centring, which PrusaSlicer refuses with exit code 0
+    with pytest.raises(ToolError, match="outside of the print volume"):
+        await server.slice_model(*args, output_path=str(target))
+
+    # Then it is reported as a failure and the earlier file is left exactly as it was
+    assert target.read_bytes() == earlier

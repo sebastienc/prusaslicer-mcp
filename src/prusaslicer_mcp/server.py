@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -602,19 +603,28 @@ async def slice_model(
             raise ToolError("Cannot centre on the bed: the project does not name its printer, so pass printer_profile")
         x, y = await _bed_center(bed_printer)
         args += ["--center", f"{x:g},{y:g}"]
-    args += ["--output", str(out), str(model)]
-
     # Everything is validated by now, so a refused request leaves nothing behind on disk.
     try:
         out.parent.mkdir(parents=create_all_parents, exist_ok=True)
+        scratch = tempfile.TemporaryDirectory(prefix=".prusaslicer-mcp-", dir=out.parent)
     except OSError as e:
         raise ToolError(f"Cannot create the output folder {out.parent}: {e}") from e
-    result = await _run(cfg, args)
-    if result.returncode != 0 or not out.is_file():
-        detail = _with_profile_hint((result.stderr.strip() or result.stdout.strip())[-2000:])
-        if "outside of the print volume" in detail and not center:
-            detail += " (hint: retry with center=true to place the model in the middle of the bed)"
-        raise ToolError(f"Slicing failed (exit {result.returncode}): {detail}")
+
+    # Slice into a private scratch folder and move the result into place only on success. PrusaSlicer exits 0 for
+    # some refusals ("outside of the print volume"), so a file already sitting at the output path would otherwise
+    # be reported as this slice's result, and a failed slice must not destroy the previous file either.
+    with scratch as scratch_dir:
+        scratch_out = Path(scratch_dir) / out.name
+        result = await _run(cfg, [*args, "--output", str(scratch_out), str(model)])
+        if result.returncode != 0 or not scratch_out.is_file():
+            detail = _with_profile_hint((result.stderr.strip() or result.stdout.strip())[-2000:])
+            if "outside of the print volume" in detail and not center:
+                detail += " (hint: retry with center=true to place the model in the middle of the bed)"
+            raise ToolError(f"Slicing failed (exit {result.returncode}): {detail}")
+        try:
+            os.replace(scratch_out, out)
+        except OSError as e:
+            raise ToolError(f"Cannot write {out}: {e}") from e
 
     warnings = parse_warnings(result.stdout)
     try:
