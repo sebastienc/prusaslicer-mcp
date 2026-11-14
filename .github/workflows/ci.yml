@@ -1,0 +1,118 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Never let CI silently re-resolve dependencies: a stale uv.lock must fail the build.
+  UV_LOCKED: "1"
+  # uv 0.12 ships experimental `format` and `check` commands; pinning keeps their behaviour (and the Ruff
+  # version `uv format` uses) identical to local runs until we choose to bump it.
+  UV_VERSION: "0.12.9"
+  # Single place to change the PrusaSlicer version the integration tests run against. The downloaded
+  # installer is cached under a key that includes it, so a bump costs one download and is then cached again.
+  PRUSASLICER_VERSION: "2.9.7"
+
+jobs:
+  lint:
+    name: lint and format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync
+      - run: uv run poe lint
+      - run: uv run poe format-check
+
+  typecheck:
+    name: type check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync
+      - run: uv run poe typecheck
+
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv run poe audit
+
+  unit:
+    name: unit tests (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The supported floor (requires-python) and the version we develop on.
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync
+      # Needs no PrusaSlicer: its command line is faked, and the stdio tests start the real server.
+      - run: uv run poe cov
+
+  integration:
+    name: integration tests (PrusaSlicer on macOS)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync
+      - name: Cache the PrusaSlicer download
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/prusaslicer/PrusaSlicer-${{ env.PRUSASLICER_VERSION }}.dmg
+          key: prusaslicer-dmg-${{ env.PRUSASLICER_VERSION }}
+      - name: Install PrusaSlicer and a throwaway data directory
+        run: .github/scripts/setup-prusaslicer-macos.sh "$PRUSASLICER_VERSION" "$RUNNER_TEMP/prusaslicer"
+      - run: uv run poe test-integration
+
+  commitlint:
+    name: commit messages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@v6
+        with:
+          configFile: commitlint.config.mjs
