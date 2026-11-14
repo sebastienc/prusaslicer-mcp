@@ -32,6 +32,12 @@ def _float(pattern: str, text: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
+def _float_total(pattern: str, text: str) -> float | None:
+    """Like _float, but for lines that list one value per extruder ("1292.02, 100.50, 0.00"): the sum."""
+    m = re.search(pattern, text, re.MULTILINE)
+    return round(sum(float(v) for v in m.group(1).split(",")), 2) if m else None
+
+
 def parse_gcode_stats(path: Path) -> GcodeStats:
     with path.open("rb") as f:
         magic = f.read(4)
@@ -53,8 +59,8 @@ def parse_gcode_stats(path: Path) -> GcodeStats:
     return GcodeStats(
         estimated_time=time_m.group(1).strip() if time_m else None,
         estimated_time_seconds=_seconds(time_m.group(1)) if time_m else None,
-        filament_used_mm=_float(r"^; filament used \[mm\] = ([\d.]+)", tail),
-        filament_used_cm3=_float(r"^; filament used \[cm3\] = ([\d.]+)", tail),
+        filament_used_mm=_float_total(r"^; filament used \[mm\] = ([\d.]+(?:,\s*[\d.]+)*)", tail),
+        filament_used_cm3=_float_total(r"^; filament used \[cm3\] = ([\d.]+(?:,\s*[\d.]+)*)", tail),
         filament_used_g=_float(r"^; total filament used \[g\] = ([\d.]+)", tail),
         filament_cost=_float(r"^; total filament cost = ([\d.]+)", tail),
         layer_count=layers or None,

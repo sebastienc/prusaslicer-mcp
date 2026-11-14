@@ -251,3 +251,47 @@ def test_bytes_that_are_not_text_do_not_break_parsing(write_gcode):
 
     # Then the footer is still read
     assert stats.filament_used_g == 2.5
+
+
+# --------------------------------------------------------------------------- several extruders
+
+
+@pytest.mark.parametrize(
+    ("line", "field", "expected"),
+    [
+        ("mm", "filament_used_mm", 1392.52),
+        ("cm3", "filament_used_cm3", 1392.52),
+    ],
+)
+def test_filament_used_adds_up_every_extruder(write_gcode, line, field, expected):
+    # Given a footer that lists one value per extruder, as PrusaSlicer writes for multi-material prints
+    path = write_gcode(footer(**{line: "1292.02, 100.50, 0.00"}))
+
+    # When the statistics are parsed
+    stats = parse_gcode_stats(path)
+
+    # Then the figure is the total over all extruders, not just the first
+    assert getattr(stats, field) == pytest.approx(expected)
+
+
+def test_unused_extruders_do_not_change_the_total(write_gcode):
+    # Given a five-extruder printer where only the first extruder was used
+    path = write_gcode(footer(mm="22500.76, 0.00, 0.00, 0.00, 0.00", cm3="54.12, 0.00, 0.00, 0.00, 0.00"))
+
+    # When the statistics are parsed
+    stats = parse_gcode_stats(path)
+
+    # Then the totals equal the first extruder's values
+    assert (stats.filament_used_mm, stats.filament_used_cm3) == (22500.76, 54.12)
+
+
+def test_total_weight_and_cost_are_not_summed_twice(write_gcode):
+    # Given a footer with a per-extruder weight line as well as the total lines
+    text = "; filament used [g] = 3.00, 4.00\n" + footer(grams="7.00", cost="0.30")
+    path = write_gcode(text)
+
+    # When the statistics are parsed
+    stats = parse_gcode_stats(path)
+
+    # Then the totals PrusaSlicer wrote are used as they are
+    assert (stats.filament_used_g, stats.filament_cost) == (7.0, 0.3)
