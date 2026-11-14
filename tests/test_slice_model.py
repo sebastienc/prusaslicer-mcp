@@ -265,7 +265,7 @@ async def test_statistics_come_from_the_gcode_footer(fake_prusaslicer, model):
     assert result.stats.layer_count == 1
 
 
-async def test_warnings_are_the_slicers_stdout_lines_mentioning_warning(fake_prusaslicer, model):
+async def test_each_single_line_slicer_warning_is_returned_trimmed(fake_prusaslicer, model):
     # Given PrusaSlicer prints progress, a warning and a differently-cased warning
     fake_prusaslicer.state.stdout = "10 => Processing\n  Warning: thin walls  \n20 => Done\nWARNING: low bridge\n"
 
@@ -504,3 +504,23 @@ async def test_the_configured_output_directory_is_created_however_deep_it_is(fak
 
     # Then the whole configured directory is created, because that path is the user's own setting
     assert result.gcode_path == str(deep / "part.gcode")
+
+
+async def test_a_multi_line_slicer_warning_is_returned_whole(fake_prusaslicer, model):
+    # Given PrusaSlicer reports gaps in the model as a warning followed by detail and advice
+    fake_prusaslicer.state.stdout = (
+        "90 => Exporting G-code to /tmp/x.gcode\n"
+        "print warning: Empty layer between 0.4 and 9.\n"
+        "Empty layer between 9.2 and 11.4.\n"
+        "\n"
+        "Make sure the object is printable. Try to repair the model.\n"
+        "Slicing result exported to /tmp/x.gcode\n"
+    )
+
+    # When the model is sliced
+    result = await slice_it(model)
+
+    # Then the caller gets one warning with every gap and the advice
+    assert len(result.warnings) == 1
+    assert "between 9.2 and 11.4" in result.warnings[0]
+    assert "Try to repair the model." in result.warnings[0]

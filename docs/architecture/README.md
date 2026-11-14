@@ -36,6 +36,7 @@ src/prusaslicer_mcp/
   config.py     executable + datadir discovery, env-var configuration
   gcode.py      parse print statistics from text G-code
   project.py    read the profiles and key settings stored in a PrusaSlicer project 3MF
+  slicer_output.py  turn PrusaSlicer's stdout into warnings
 tests/               unit tests (no PrusaSlicer) plus a few integration tests; see Testing below
 .github/
   workflows/ci.yml             lint, types, audit, unit (3.12, 3.14), integration (macOS), commitlint
@@ -48,6 +49,7 @@ tests/               unit tests (no PrusaSlicer) plus a few integration tests; s
 | `config.py` | Resolve `Config(executable, datadir, output_dir, timeout)` from env and platform defaults. Raises `ConfigError` (`PrusaSlicerNotFound` is a subclass) for an unusable setting. | stdlib |
 | `cli.py` | `run(config, args, timeout)` → `CliResult(returncode, stdout, stderr)`. Prepends `--datadir` when configured. Kills the process on timeout (`CliTimeout`). | `config` |
 | `gcode.py` | `parse_gcode_stats(path)` → `GcodeStats`. Rejects binary G-code. | pydantic |
+| `slicer_output.py` | `parse_warnings(stdout)` → one string per PrusaSlicer warning. A warning is a block: a line containing "warning" plus the plain lines after it (more gaps, object name, advice), up to the next `NN => ...` progress line or the final export message. | stdlib |
 | `project.py` | `read_project(path)` → `ProjectInfo` (stored printer/print/material profile names and `KEY_SETTINGS`) or `None` when the file is not a `.3mf` that embeds `Metadata/Slic3r_PE.config`. | stdlib, pydantic |
 | `server.py` | Tool surface. Validates input, builds CLI args, shapes pydantic results. Lazily loads `Config` on first use (`get_config()`). | all of the above, `trimesh` |
 
