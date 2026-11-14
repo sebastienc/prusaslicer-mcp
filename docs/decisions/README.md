@@ -16,3 +16,4 @@ ADRs are append-only history: to change a decision, write a new ADR and mark the
 | [0007](0007-slice-prusaslicer-projects-with-their-own-settings.md) | Slice PrusaSlicer projects with their own settings | accepted |
 | [0008](0008-conventional-commits-and-release-please.md) | Conventional Commits, enforced by commitlint, drive releases with Release Please | accepted |
 | [0009](0009-quality-gate-toolchain.md) | Quality gates: uv first, Ruff for linting, Poe to chain them | accepted |
+| [0010](0010-pin-ty-and-add-pyright.md) | Pin ty and add pyright as a second type checker | accepted |
