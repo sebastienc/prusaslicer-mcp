@@ -19,3 +19,4 @@ ADRs are append-only history: to change a decision, write a new ADR and mark the
 | [0010](0010-pin-ty-and-add-pyright.md) | Pin ty and add pyright as a second type checker | accepted |
 | [0011](0011-render-previews-with-numpy-and-pillow.md) | Render previews ourselves with numpy and Pillow | accepted |
 | [0012](0012-transform-with-prusaslicers-own-flags.md) | Transform models with PrusaSlicer's own flags, and do not expose --merge | accepted |
+| [0013](0013-centre-plain-3mf-files-automatically.md) | Centre plain 3MF files on the bed automatically | accepted |
