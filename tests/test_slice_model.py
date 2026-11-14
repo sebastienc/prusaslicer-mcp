@@ -1064,3 +1064,114 @@ async def test_no_centre_advice_when_sizes_are_unknown_and_it_was_already_centre
 
     # Then telling the caller to centre it would be wrong: the message is PrusaSlicer's own
     assert message.endswith(OUTSIDE)
+
+
+# --------------------------------------------------------------------------- centring plain 3MF files automatically (ADR 0013)
+
+MK3S_PROFILES = (MK3S, "q", "m")
+
+
+async def test_a_plain_3mf_is_centred_automatically_on_its_printers_bed(fake_prusaslicer, make_3mf):
+    # Given a plain 3MF (no PrusaSlicer settings embedded) and no center option, on a 250 x 210 mm bed
+    plain = make_3mf(config=None)
+
+    # When it is sliced
+    result = await slice_it(plain, profiles=MK3S_PROFILES)
+
+    # Then it is centred on the bed, and the result says so
+    args = fake_prusaslicer.calls[0]
+    assert args[args.index("--center") + 1] == "125,105"
+    assert result.centered is True
+
+
+async def test_a_project_is_not_centred_unless_asked(fake_prusaslicer, make_3mf):
+    # Given a PrusaSlicer project, whose layout was chosen on purpose, and no center option
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced as saved
+    result = await slice_it(project, profiles=NO_PROFILES)
+
+    # Then its layout is left alone
+    assert "--center" not in fake_prusaslicer.calls[0]
+    assert result.centered is False
+
+
+async def test_a_project_is_centred_when_asked(fake_prusaslicer, make_3mf):
+    # Given a project and an explicit request to centre it
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced
+    result = await slice_it(project, profiles=NO_PROFILES, center=True)
+
+    # Then it is centred on the bed of the printer stored in the project
+    assert "--center" in fake_prusaslicer.calls[0]
+    assert result.centered is True
+
+
+async def test_an_stl_is_not_centred_unless_asked(fake_prusaslicer, model):
+    # Given an STL, which PrusaSlicer places itself, and no center option
+    # When it is sliced
+    result = await slice_it(model, profiles=MK3S_PROFILES)
+
+    # Then no --center is passed
+    assert "--center" not in fake_prusaslicer.calls[0]
+    assert result.centered is False
+
+
+async def test_an_stl_is_centred_when_asked(fake_prusaslicer, model):
+    # Given an STL and an explicit request to centre it
+    # When it is sliced
+    result = await slice_it(model, profiles=MK3S_PROFILES, center=True)
+
+    # Then it is centred
+    assert "--center" in fake_prusaslicer.calls[0]
+    assert result.centered is True
+
+
+async def test_center_false_keeps_a_plain_3mfs_stored_position(fake_prusaslicer, make_3mf):
+    # Given a plain 3MF and an explicit request not to move it
+    plain = make_3mf(config=None)
+
+    # When it is sliced
+    result = await slice_it(plain, profiles=MK3S_PROFILES, center=False)
+
+    # Then it is not centred
+    assert "--center" not in fake_prusaslicer.calls[0]
+    assert result.centered is False
+
+
+async def test_automatic_centring_is_skipped_quietly_when_the_bed_is_unknown(fake_prusaslicer, make_3mf):
+    # Given a plain 3MF on a printer profile whose bed cannot be looked up (the fake knows only the MK3S)
+    plain = make_3mf(config=None)
+
+    # When it is sliced with the default
+    result = await slice_it(plain, profiles=("Some custom printer", "q", "m"))
+
+    # Then it still slices, as before, just without centring
+    assert "--center" not in fake_prusaslicer.calls[0]
+    assert result.centered is False
+
+
+async def test_a_refused_plain_3mf_that_was_not_centred_is_told_to_centre_it(fake_prusaslicer, make_3mf):
+    # Given a plain 3MF that fits the bed, sliced with centring switched off, and PrusaSlicer refusing it
+    refuse(fake_prusaslicer, OUTSIDE)
+    plain = make_3mf(config=None, at=(0.0, 0.0, 10.0))
+
+    # When it is sliced
+    message = await refusal(plain, center=False)
+
+    # Then the advice is to centre it
+    assert "center=true" in message
+
+
+async def test_a_refused_3mf_that_was_centred_automatically_is_not_told_to_centre_it(fake_prusaslicer, make_3mf):
+    # Given a plain 3MF that fits the bed, centred automatically, and PrusaSlicer refusing it anyway
+    refuse(fake_prusaslicer, OUTSIDE)
+    plain = make_3mf(config=None)
+
+    # When it is sliced with the default
+    message = await refusal(plain)
+
+    # Then telling the caller to centre it would be wrong, since that already happened
+    assert "center=true" not in message
+    assert message.endswith(OUTSIDE)

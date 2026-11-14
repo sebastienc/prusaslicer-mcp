@@ -115,12 +115,27 @@ async def test_slice_returns_time_filament_and_layers_for_a_cube_with_an_overrid
     assert result.stats.layer_count
 
 
-async def test_slice_refuses_a_plain_3mf_around_the_origin_and_suggests_center(origin_cube_3mf, installed):
+async def test_a_plain_3mf_around_the_origin_is_centred_automatically(origin_cube_3mf, installed):
     # Given a plain 3MF that keeps its stored coordinates and so sits half off the bed
 
-    # When / Then slicing it as it is fails with the remedy in the message
+    # When it is sliced with no center option
+    result = await server.slice_model(
+        str(origin_cube_3mf), installed.printer, installed.print_profile, installed.filament
+    )
+
+    # Then it is centred for the caller and slices, and the result says so (ADR 0013)
+    assert result.centered is True
+    assert result.stats.layer_count
+
+
+async def test_slice_refuses_a_plain_3mf_around_the_origin_when_centring_is_off(origin_cube_3mf, installed):
+    # Given a plain 3MF that keeps its stored coordinates and so sits half off the bed
+
+    # When / Then slicing it with centring switched off fails with the remedy in the message
     with pytest.raises(ToolError, match="center=true"):
-        await server.slice_model(str(origin_cube_3mf), installed.printer, installed.print_profile, installed.filament)
+        await server.slice_model(
+            str(origin_cube_3mf), installed.printer, installed.print_profile, installed.filament, center=False
+        )
 
 
 async def test_slice_places_a_plain_3mf_around_the_origin_when_centered(origin_cube_3mf, installed):
@@ -318,9 +333,9 @@ async def test_a_refused_slice_does_not_reuse_the_file_from_an_earlier_slice(ori
     await server.slice_model(*args, center=True, output_path=str(target))
     earlier = target.read_bytes()
 
-    # When the same model is sliced to the same path without centring, which PrusaSlicer refuses with exit code 0
+    # When the same model is sliced to the same path with centring off, which PrusaSlicer refuses with exit code 0
     with pytest.raises(ToolError, match="outside of the print volume"):
-        await server.slice_model(*args, output_path=str(target))
+        await server.slice_model(*args, center=False, output_path=str(target))
 
     # Then it is reported as a failure and the earlier file is left exactly as it was
     assert target.read_bytes() == earlier

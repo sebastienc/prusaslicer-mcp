@@ -114,9 +114,9 @@ async def test_center_follows_the_bed_size_of_the_printer_profile(slicer, model)
     assert centre_passed_to_prusaslicer(slicer) == "125,105"
 
 
-async def test_model_is_not_moved_unless_center_is_requested(slicer, model):
-    # Given a model file and no center option
-    arguments = slice_args(model)
+async def test_a_plain_3mf_is_not_moved_when_center_is_false(slicer, model):
+    # Given a plain 3MF and an explicit request not to move it (the default would now centre it, ADR 0013)
+    arguments = slice_args(model, center=False)
 
     # When the model is sliced
     await server.mcp.call_tool("slice_model", arguments)
@@ -139,6 +139,6 @@ async def test_outside_print_volume_failure_suggests_center(slicer, model):
     # Given PrusaSlicer reports that the model is off the bed
     slicer.state["stderr"] = "All objects are outside of the print volume."
 
-    # When / Then slicing without center fails with the remedy in the message
+    # When / Then slicing without centring (switched off, since a plain 3MF is centred by default) fails with the remedy
     with pytest.raises(ToolError, match="center=true"):
-        await server.mcp.call_tool("slice_model", slice_args(model))
+        await server.mcp.call_tool("slice_model", slice_args(model, center=False))
