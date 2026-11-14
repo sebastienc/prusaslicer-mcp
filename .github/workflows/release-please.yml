@@ -1,0 +1,25 @@
+name: release-please
+
+# Opens (and keeps up to date) a release pull request from the Conventional Commits on main. Merging it tags
+# the release and writes the changelog. Nothing is published to PyPI.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v5
+        with:
+          # Pull requests opened with the default GITHUB_TOKEN do not trigger other workflows, so the release PR
+          # would get no CI. Add a personal access token as the RELEASE_PLEASE_TOKEN secret to fix that; until
+          # then this falls back to the default token.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
