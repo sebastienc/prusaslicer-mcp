@@ -27,7 +27,7 @@ reads back the print time and filament use. `preview_model` and `preview_gcode` 
 | `list_printers` | Installed printer models, exact printer profile names, nozzle variants, bed sizes |
 | `list_profiles` | Print (quality) profiles and compatible filament profiles for a printer profile |
 | `inspect_model` | Size, volume, watertightness, part count; optional build-volume fit check (via `trimesh`), a warning when a 3MF's stored position is off the bed, and, for a 3MF saved from PrusaSlicer, the profiles and key settings (infill, brim, supports) stored in it |
-| `slice_model` | Slice with `printer_profile` / `print_profile` / `material_profile` (all three, or none for a PrusaSlicer project, which then keeps its own saved settings), optional setting overrides and `center`; returns G-code path, time, filament, cost, layers, and whether the project's or the profiles' settings were used |
+| `slice_model` | Slice with `printer_profile` / `print_profile` / `material_profile` (all three, or none for a PrusaSlicer project, which then keeps its own saved settings), optional setting overrides, `center`, and transforms (`rotate_x/y/z`, `scale`, `scale_to_fit`, `split`, `copies`); returns G-code path, time, filament, cost, layers, and whether the project's or the profiles' settings were used |
 | `preview_model` | A PNG of a model from iso, front, side or top, or all four on one sheet, with its size and which way is up; shows a Y-up scan lying on its side at a glance |
 | `preview_gcode` | A PNG of sliced G-code: one layer's toolpaths coloured by feature, or front and side silhouettes of everything printed, where an empty stretch shows as a blank band |
 
@@ -80,6 +80,7 @@ Code asks you to approve project-scoped servers the first time; `claude mcp list
 
 ## Notes
 
+- Transforms use PrusaSlicer's own flags: rotations apply in the fixed order X, then Y, then Z; `scale` is a factor (0.5 is half, not 50%); `copies` is the total number of objects. Plates built from several files are not supported, because `--merge` crashes PrusaSlicer 2.9.7 ([ADR 0012](docs/decisions/0012-transform-with-prusaslicers-own-flags.md)).
 - A slice that succeeds is not always printable. A scan exported Y-up slices without an error and with plausible statistics, but it lies on its side, so parts of its height print nothing. `preview_model` shows that at a glance and `preview_gcode` (view `profile`) shows the empty stretches. A scan can also have a real hole, such as a missing base, which needs repairing as well. `slice_model` returns PrusaSlicer's own warnings in full and adds a warning when layers skip a large stretch of the height, so read `warnings` before trusting the numbers.
 - Plain 3MF files (exported from CAD, not saved from PrusaSlicer) keep their stored coordinates, so a part modelled around the origin sits half off the bed and slicing fails with "All objects are outside of the print volume". Pass `center=true` to `slice_model` to place it in the middle of the bed. STL/OBJ files are placed automatically, and 3MF projects saved from PrusaSlicer should be sliced with `center=false` to keep their layout.
 
