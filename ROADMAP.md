@@ -12,7 +12,7 @@ When an item ships, move it to **Done** and update the README and architecture d
 
 ## Next
 
-1. **Register and dogfood.** Add the server to Claude Code (user scope) and use it on real models; note friction and fix it. Candidate gaps are tool descriptions, error messages, and defaults.
+1. **Dogfood.** The server is registered for this repo through the committed `.mcp.json` (project scope). Use it on real models; note friction and fix it. Candidate gaps are tool descriptions, error messages, and defaults.
 2. **Preview rendering.** Return PNGs so Claude can *see* a model and individual sliced layers (adds `matplotlib`; needs an ADR on the rendering approach, e.g. mesh silhouette vs. parsed toolpaths).
 3. **Transforms and multi-model plates.** Expose `--rotate`, `--rotate-x/-y`, `--scale`, `--scale-to-fit`, `--center`, `--dont-arrange`, `--split`, and `--merge` on `slice_model`.
 4. **Quality gates.** CI running the unit tests on push; ruff (lint/format) and a type checker; an automated stdio protocol test (tool list, schemas, annotations) in place of the manual one.

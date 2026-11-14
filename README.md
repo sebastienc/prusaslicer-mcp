@@ -66,6 +66,14 @@ claude mcp add prusaslicer \
 paths containing spaces). `claude mcp list` should then show `prusaslicer`. Other MCP clients need the same
 command and an `env` block.
 
+### Project scope (this repo)
+
+The repository ships a `.mcp.json` that registers the server for anyone working in this checkout
+(`claude mcp add --scope project prusaslicer -- uv run prusaslicer-mcp`). It contains no paths: `uv run`
+resolves the project from the working directory, and PrusaSlicer is auto-detected. If detection fails, set
+`PRUSASLICER_PATH` in the environment `claude` is launched from (for example via direnv and `.env`). Claude
+Code asks you to approve project-scoped servers the first time; `claude mcp list` shows the status.
+
 ## Notes
 
 - `--query-*` actions exit with status 1 on success in 2.9.7; the server judges them by their output file.

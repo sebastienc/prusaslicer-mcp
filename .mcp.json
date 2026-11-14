@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "prusaslicer": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "prusaslicer-mcp"
+      ],
+      "env": {}
+    }
+  }
+}

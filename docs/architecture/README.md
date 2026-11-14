@@ -93,6 +93,10 @@ Read in `config.py`; documented in `.env.example` and the README ([ADR 0006](../
 
 Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `PrusaSlicer`, `prusa-slicer-console`) → platform install globs (macOS `/Applications/**/PrusaSlicer.app`, Windows `Program Files`).
 
+### Client registration
+
+`.mcp.json` at the repo root registers the server for Claude Code at project scope (`uv run prusaslicer-mcp`, no `env`, no paths). The client starts it with the project root as cwd, so the default `./output` lands in the git-ignored `output/` directory. The server inherits `PRUSASLICER_*` variables only from the environment `claude` was launched in; `.env` is not read by the server itself.
+
 ## Error handling and safety
 
 - Bad input raises `ValueError`; CLI/tool failure raises `RuntimeError`. The SDK converts both to MCP tool errors.
