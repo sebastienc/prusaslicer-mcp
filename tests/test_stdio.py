@@ -15,7 +15,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, ImageContent, TextContent
 
-READ_ONLY_TOOLS = {"list_printers", "list_profiles", "inspect_model", "preview_model"}
+READ_ONLY_TOOLS = {"list_printers", "list_profiles", "inspect_model", "preview_model", "preview_gcode"}
 ALL_TOOLS = READ_ONLY_TOOLS | {"slice_model"}
 
 
@@ -199,3 +199,22 @@ async def test_a_preview_arrives_as_a_png_image_and_a_caption(cube_stl):
     assert base64.b64decode(image.data)[:8] == b"\x89PNG\r\n\x1a\n"
     assert isinstance(text, TextContent)
     assert "Z is up" in text.text
+
+
+async def test_a_gcode_preview_arrives_as_a_png_image_and_a_caption(tmp_path):
+    # Given a small sliced print
+    from gcode_builders import layer, square
+
+    path = tmp_path / "print.gcode"
+    path.write_text("M83\n" + "".join(layer(z, ("Perimeter", square(50, 50, 20))) for z in (0.2, 0.4, 0.6)))
+    async with connected() as (_, session):
+        # When a client asks for the side silhouette
+        result = await session.call_tool("preview_gcode", {"gcode_path": str(path), "view": "profile", "size": 256})
+
+    # Then it receives a real PNG image block followed by a text caption
+    assert result.is_error is False
+    image, text = result.content
+    assert isinstance(image, ImageContent)
+    assert base64.b64decode(image.data)[:8] == b"\x89PNG\r\n\x1a\n"
+    assert isinstance(text, TextContent)
+    assert "silhouettes" in text.text
