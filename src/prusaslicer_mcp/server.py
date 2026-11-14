@@ -6,9 +6,9 @@ import json
 import re
 import tempfile
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
@@ -16,8 +16,12 @@ from pydantic import BaseModel, Field
 from . import cli
 from .config import Config, ConfigError, load_config
 from .gcode import GcodeStats, layer_gap_warning, parse_gcode_stats
+from .preview_model import SHEET_ORDER, render_model, to_png
 from .project import ProjectInfo, read_project
 from .slicer_output import parse_warnings
+
+if TYPE_CHECKING:
+    import trimesh
 
 mcp = MCPServer(
     "prusaslicer",
@@ -46,6 +50,7 @@ _RESERVED_OVERRIDES = frozenset(
         "center",
     }
 )
+_SHEET_CORNERS = ("top left", "top right", "bottom left", "bottom right")
 _PROFILE_NOT_FOUND = re.compile(r"profile '.*' wasn't found", re.IGNORECASE)
 _PROFILE_HINT = " (hint: profile names must match exactly; get them from list_printers and list_profiles)"
 
@@ -90,6 +95,21 @@ def _chosen_profiles(
             )
         return None
     raise ToolError("Give all three profiles (printer_profile, print_profile, material_profile) or none")
+
+
+def _load_mesh(path: Path) -> trimesh.Trimesh:
+    """Load a model file as one mesh, or raise a ToolError a client can read."""
+    import trimesh
+
+    try:
+        mesh = trimesh.load(path, force="mesh")
+    except (
+        Exception
+    ) as e:  # trimesh's parsers raise assorted types on bad input (BadZipFile, ValueError, ImportError, ...)
+        raise ToolError(f"Could not read {path.name} as a {path.suffix.lower()} model: {e}") from e
+    if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
+        raise ToolError("Could not load a triangle mesh from this file.")
+    return mesh
 
 
 def _model_path(path: str) -> Path:
@@ -243,17 +263,8 @@ def inspect_model(
 ) -> ModelInfo:
     """Check a model before slicing: size, volume, watertightness, number of separate parts,
     and (optionally) whether it fits a given build volume."""
-    import trimesh
-
     path = _model_path(model_path)
-    try:
-        mesh = trimesh.load(path, force="mesh")
-    except (
-        Exception
-    ) as e:  # trimesh's parsers raise assorted types on bad input (BadZipFile, ValueError, ImportError, ...)
-        raise ToolError(f"Could not read {path.name} as a {path.suffix.lower()} model: {e}") from e
-    if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
-        raise ToolError("Could not load a triangle mesh from this file.")
+    mesh = _load_mesh(path)
 
     size = tuple(float(x) for x in mesh.extents)
     warnings: list[str] = []
@@ -298,6 +309,45 @@ def inspect_model(
         project=read_project(path),
         warnings=warnings,
     )
+
+
+PreviewView = Literal["iso", "front", "side", "top", "sheet"]
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def preview_model(
+    model_path: Annotated[str, Field(description="Absolute path to an STL/3MF/OBJ file")],
+    view: Annotated[
+        PreviewView,
+        Field(
+            description="iso (default), front, side or top; sheet puts all four in one picture. Z is up, and the model "
+            "is drawn as stored, centred."
+        ),
+    ] = "iso",
+    size: Annotated[int, Field(description="Picture width and height in pixels", ge=128, le=1024)] = 640,
+) -> list[Image | str]:
+    """Draw a picture of a model, to check its shape and which way up it is before slicing.
+
+    Returns a PNG and a caption with its size. PrusaSlicer prints with z up too, so a model that looks to be
+    lying on its side will be printed that way (scans are often Y-up)."""
+    path = _model_path(model_path)
+    mesh = _load_mesh(path)
+    try:
+        picture = render_model(mesh, view, size)
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    x, y, z = (float(v) for v in mesh.extents)
+    where = (
+        "sheet: " + ", ".join(f"{name} ({corner})" for name, corner in zip(SHEET_ORDER, _SHEET_CORNERS, strict=True))
+        if view == "sheet"
+        else f"{view} view"
+    )
+    caption = (
+        f"{path.name}, {where}. Size {x:.1f} x {y:.1f} x {z:.1f} mm (x, y, z). Z is up and the model is drawn as "
+        "stored, centred. PrusaSlicer also prints with z up, so a model that looks to be lying on its side would be "
+        "printed that way."
+    )
+    return [Image(data=to_png(picture), format="png"), caption]
 
 
 # --------------------------------------------------------------------------- slicing

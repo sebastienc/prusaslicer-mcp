@@ -5,6 +5,7 @@ annotations, error text), which calling the Python functions directly cannot sho
 """
 
 import asyncio
+import base64
 import json
 import sys
 from contextlib import asynccontextmanager
@@ -12,9 +13,9 @@ from contextlib import asynccontextmanager
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.types import CallToolResult, TextContent
+from mcp.types import CallToolResult, ImageContent, TextContent
 
-READ_ONLY_TOOLS = {"list_printers", "list_profiles", "inspect_model"}
+READ_ONLY_TOOLS = {"list_printers", "list_profiles", "inspect_model", "preview_model"}
 ALL_TOOLS = READ_ONLY_TOOLS | {"slice_model"}
 
 
@@ -41,7 +42,7 @@ async def tools():
         return {tool.name: tool for tool in (await session.list_tools()).tools}
 
 
-async def test_the_server_offers_exactly_the_four_tools(tools):
+async def test_the_server_offers_exactly_these_tools(tools):
     # Given a freshly started server
 
     # When a client lists its tools (the fixture)
@@ -182,3 +183,19 @@ async def test_stdout_carries_nothing_but_protocol_messages():
     assert lines
     for line in lines:
         assert json.loads(line)["jsonrpc"] == "2.0", line
+
+
+async def test_a_preview_arrives_as_a_png_image_and_a_caption(cube_stl):
+    # Given a valid 20 mm cube
+    async with connected() as (_, session):
+        # When a client asks for a preview
+        result = await session.call_tool("preview_model", {"model_path": str(cube_stl), "size": 256})
+
+    # Then it receives a real PNG image block followed by a text caption
+    assert result.is_error is False
+    image, text = result.content
+    assert isinstance(image, ImageContent)
+    assert image.mime_type == "image/png"
+    assert base64.b64decode(image.data)[:8] == b"\x89PNG\r\n\x1a\n"
+    assert isinstance(text, TextContent)
+    assert "Z is up" in text.text
