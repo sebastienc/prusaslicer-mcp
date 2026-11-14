@@ -20,11 +20,11 @@ class GcodeStats(BaseModel):
     layer_count: int | None = None
 
 
-def _seconds(text: str) -> int:
-    total = 0
-    for value, unit in re.findall(r"(\d+)\s*([dhms])", text):
-        total += int(value) * {"d": 86400, "h": 3600, "m": 60, "s": 1}[unit]
-    return total
+def _seconds(text: str) -> int | None:
+    parts = re.findall(r"(\d+)\s*([dhms])", text)
+    if not parts:
+        return None
+    return sum(int(value) * {"d": 86400, "h": 3600, "m": 60, "s": 1}[unit] for value, unit in parts)
 
 
 def _float(pattern: str, text: str) -> float | None:
@@ -33,7 +33,9 @@ def _float(pattern: str, text: str) -> float | None:
 
 
 def parse_gcode_stats(path: Path) -> GcodeStats:
-    if path.read_bytes()[:4] == b"GCDE":
+    with path.open("rb") as f:
+        magic = f.read(4)
+    if magic == b"GCDE":
         raise ValueError("Binary G-code (.bgcode) cannot be parsed; slice with binary G-code disabled.")
 
     with path.open("rb") as f:
