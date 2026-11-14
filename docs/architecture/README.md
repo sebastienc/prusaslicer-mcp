@@ -43,7 +43,7 @@ tests/
 
 | Module | Responsibility | Depends on |
 |---|---|---|
-| `config.py` | Resolve `Config(executable, datadir, output_dir, timeout)` from env and platform defaults. Raises `PrusaSlicerNotFound`. | stdlib |
+| `config.py` | Resolve `Config(executable, datadir, output_dir, timeout)` from env and platform defaults. Raises `ConfigError` (`PrusaSlicerNotFound` is a subclass) for an unusable setting. | stdlib |
 | `cli.py` | `run(config, args, timeout)` → `CliResult(returncode, stdout, stderr)`. Prepends `--datadir` when configured. Kills the process on timeout (`CliTimeout`). | `config` |
 | `gcode.py` | `parse_gcode_stats(path)` → `GcodeStats`. Rejects binary G-code. | pydantic |
 | `server.py` | Tool surface. Validates input, builds CLI args, shapes pydantic results. Lazily loads `Config` on first use (`get_config()`). | all of the above, `trimesh` |
@@ -89,7 +89,7 @@ Read in `config.py`; documented in `.env.example` and the README ([ADR 0006](../
 | `PRUSASLICER_PATH` | Executable. If set but invalid, the server errors rather than falling back. | auto-detect |
 | `PRUSASLICER_DATADIR` | Passed as `--datadir` | platform default if the directory exists |
 | `PRUSASLICER_MCP_OUTPUT_DIR` | Default G-code location | `./output` (relative to the server's cwd, resolved at startup) |
-| `PRUSASLICER_MCP_TIMEOUT` | Per-call timeout (s) for slicing; queries use 60 s | `600` |
+| `PRUSASLICER_MCP_TIMEOUT` | Per-call timeout (s) for slicing, a positive number; queries use 60 s | `600` |
 
 Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `PrusaSlicer`, `prusa-slicer-console`) → platform install globs (macOS `/Applications/**/PrusaSlicer.app`, Windows `Program Files`).
 
@@ -99,7 +99,7 @@ Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `Pru
 
 ## Error handling and safety
 
-- Every expected failure (bad input, PrusaSlicer not found, timeout, slicer or query error) is raised as `ToolError`. In MCP SDK 2.x only `ToolError` text reaches the client; any other exception is a "crash" whose message is withheld (`Error executing tool <name>` only). `server._run` converts `CliTimeout`, `get_config` converts `PrusaSlicerNotFound`. A slicer "outside of the print volume" failure adds a hint to retry with `center=true`, and a "profile ... wasn't found" failure (from slicing or a query) adds a hint to take exact names from `list_printers` / `list_profiles`.
+- Every expected failure (bad input, PrusaSlicer not found, timeout, slicer or query error) is raised as `ToolError`. In MCP SDK 2.x only `ToolError` text reaches the client; any other exception is a "crash" whose message is withheld (`Error executing tool <name>` only). `server._run` converts `CliTimeout`, `get_config` converts `ConfigError` (PrusaSlicer not found, or an invalid setting such as a non-positive `PRUSASLICER_MCP_TIMEOUT`). A slicer "outside of the print volume" failure adds a hint to retry with `center=true`, and a "profile ... wasn't found" failure (from slicing or a query) adds a hint to take exact names from `list_printers` / `list_profiles`.
 - No shell is ever involved. Subprocesses use `create_subprocess_exec` with an argument list and `stdin` closed.
 - Setting overrides: keys must match `^[a-z][a-z0-9_]*$`, values may not contain newlines, and each is emitted as one `--key=value` argument (underscores become hyphens).
 - Model paths are resolved, must exist, and must have a supported extension (`.stl .3mf .obj .amf .step .stp`).

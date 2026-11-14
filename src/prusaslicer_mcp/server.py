@@ -14,7 +14,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from . import cli
-from .config import Config, PrusaSlicerNotFound, load_config
+from .config import Config, ConfigError, load_config
 from .gcode import GcodeStats, parse_gcode_stats
 
 mcp = MCPServer(
@@ -40,7 +40,7 @@ def get_config() -> Config:
     if _config is None:
         try:
             _config = load_config()
-        except PrusaSlicerNotFound as e:
+        except ConfigError as e:
             raise ToolError(str(e)) from e
     return _config
 

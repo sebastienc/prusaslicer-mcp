@@ -22,7 +22,11 @@ _WIN_GLOBS = [
 _PATH_NAMES = ["prusa-slicer", "PrusaSlicer", "prusa-slicer-console"]
 
 
-class PrusaSlicerNotFound(RuntimeError):
+class ConfigError(RuntimeError):
+    """The environment configures the server in a way it cannot use."""
+
+
+class PrusaSlicerNotFound(ConfigError):
     pass
 
 
@@ -76,10 +80,21 @@ def default_datadir() -> Path | None:
     return p if p.is_dir() else None
 
 
+def _timeout_from_env() -> float:
+    raw = os.environ.get("PRUSASLICER_MCP_TIMEOUT", "600")
+    try:
+        timeout = float(raw)
+    except ValueError:
+        timeout = 0.0
+    if timeout <= 0:
+        raise ConfigError(f"PRUSASLICER_MCP_TIMEOUT must be a positive number of seconds, got {raw!r}")
+    return timeout
+
+
 def load_config() -> Config:
     return Config(
         executable=find_executable(),
         datadir=default_datadir(),
         output_dir=Path(os.environ.get("PRUSASLICER_MCP_OUTPUT_DIR", "output")).expanduser().resolve(),
-        timeout=float(os.environ.get("PRUSASLICER_MCP_TIMEOUT", "600")),
+        timeout=_timeout_from_env(),
     )

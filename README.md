@@ -52,7 +52,7 @@ In VS Code, open `prusaslicer-mcp.code-workspace` (interpreter, pytest, tasks, d
 | `PRUSASLICER_PATH` | PrusaSlicer executable | auto-detected (`PATH`, `/Applications/**/PrusaSlicer.app`, ...) |
 | `PRUSASLICER_DATADIR` | Profile/config directory | platform default |
 | `PRUSASLICER_MCP_OUTPUT_DIR` | Where G-code goes when no output path is given | `./output` |
-| `PRUSASLICER_MCP_TIMEOUT` | Slice timeout (seconds) | `600` |
+| `PRUSASLICER_MCP_TIMEOUT` | Slice timeout (seconds, must be positive) | `600` |
 
 ## Register with Claude Code
 

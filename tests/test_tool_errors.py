@@ -154,3 +154,19 @@ async def test_unrelated_slicer_error_gets_no_profile_hint(fake_config, model, m
     # Then the message is the slicer's text without a misleading profile hint
     assert "Unknown option --fill-densty" in msg
     assert "list_profiles" not in msg
+
+
+async def test_invalid_timeout_setting_error_is_readable(tmp_path, monkeypatch):
+    # Given a usable PrusaSlicer but a timeout setting that is not a number
+    slicer = tmp_path / "PrusaSlicer"
+    slicer.write_text("#!/bin/sh\n")
+    slicer.chmod(0o755)
+    monkeypatch.setattr(server, "_config", None)
+    monkeypatch.setenv("PRUSASLICER_PATH", str(slicer))
+    monkeypatch.setenv("PRUSASLICER_MCP_TIMEOUT", "abc")
+
+    # When any tool that needs the configuration is called
+    message = await tool_error("list_printers", {})
+
+    # Then the client is told which setting is wrong
+    assert "PRUSASLICER_MCP_TIMEOUT" in message
