@@ -36,10 +36,11 @@ src/prusaslicer_mcp/
   config.py     executable + datadir discovery, env-var configuration
   gcode.py      parse print statistics from text G-code
   project.py    read the profiles and key settings stored in a PrusaSlicer project 3MF
-tests/
-  conftest.py       prusaslicer fixture (skips if not installed), cube_stl fixture
-  test_gcode.py     parser unit tests (no PrusaSlicer needed)
-  test_server.py    integration tests against a real install
+tests/               unit tests (no PrusaSlicer) plus a few integration tests; see Testing below
+.github/
+  workflows/ci.yml             lint, types, audit, unit (3.12, 3.14), integration (macOS), commitlint
+  workflows/release-please.yml release pull request from Conventional Commits
+  scripts/setup-prusaslicer-macos.sh   installs PrusaSlicer and a throwaway data directory for CI
 ```
 
 | Module | Responsibility | Depends on |
@@ -118,9 +119,20 @@ Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `Pru
 
 ## Testing
 
-`uv run pytest`. Unit tests need nothing external; integration tests use the `prusaslicer` fixture and
-skip when no install is found. Protocol-level behaviour (tool list, schemas, annotations) was
-additionally verified with an MCP stdio client; there is no automated test for that yet.
+`uv run poe check` runs lint, format check, type check and the unit tests; `uv run poe test-integration` runs the
+rest. Tasks are defined once in `[tool.poe.tasks]` and CI calls the same ones ([ADR 0009](../decisions/0009-quality-gate-toolchain.md)).
+
+| Kind | What it needs | Where |
+|---|---|---|
+| Unit | nothing; PrusaSlicer's command line is faked (`cli.run`), or a throwaway shell script stands in for it | most of `tests/` |
+| Protocol | nothing; starts the real server as a subprocess and talks to it over stdio | `tests/test_stdio.py` |
+| Integration | a real PrusaSlicer; marked `integration` automatically when a test uses the `prusaslicer` fixture, and skipped when no install is found | `tests/test_server.py` |
+
+CI (`.github/workflows/ci.yml`) runs these jobs: lint and format, type check, dependency audit, unit tests on
+Python 3.12 and 3.14 with a 95% coverage floor, integration tests on macOS, and commitlint. The integration job
+installs the official 2.9.7 `.dmg` (cached by version, `PRUSASLICER_VERSION` in the workflow) and builds a
+throwaway data directory from the profiles inside the app. Linux is not covered because Prusa no longer attaches Linux
+builds to its GitHub releases.
 
 ## Extension points and next steps
 

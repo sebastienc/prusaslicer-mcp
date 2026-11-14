@@ -12,5 +12,6 @@ paths:
 - Use `pathlib.Path` for paths. Resolve and validate user-supplied paths before use.
 - Prefer `async def` for anything that waits on a subprocess; keep pure computation synchronous.
 - Dependencies are managed with **uv** only: `uv add <pkg>` / `uv add --dev <pkg>`. Never hand-edit `uv.lock`, never use `pip install`.
+- Formatting and linting are automatic: run `uv run poe fix`. Do not silence the type checker with `# type: ignore`; narrow the type so the code is correct (see `_chosen_profiles`).
 - Keep comments for the *why* (quirks, constraints). Do not restate what the code does.
 - No broad `except Exception: pass`. Catch the specific error and either handle it or re-raise with context.

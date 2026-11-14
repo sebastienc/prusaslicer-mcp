@@ -45,9 +45,10 @@ Every test is written as **Given / When / Then** (the same shape as a BDD scenar
 
 ## Practicalities
 
-- Run the suite with `uv run pytest`. It must pass before committing.
+- Run `uv run poe check` before committing (lint, format, types, unit tests). `uv run poe test-all` also runs the integration tests.
+- **Unit vs integration.** Any test that uses the `prusaslicer` fixture is marked `integration` automatically (`tests/conftest.py`), so never give a *fake* fixture that name; `test_slice_model.py` calls its fake `fake_prusaslicer` for that reason. CI runs unit tests on Python 3.12 and 3.14 (95% coverage floor) and integration tests on macOS.
+- `tests/test_stdio.py` starts the real server and checks what a client sees (tools, annotations, schemas, descriptions, error text, that stdout carries only protocol messages). Extend it when a tool's schema or annotations change; it replaces the manual client script.
 - Unit-test pure logic (parsing, validation) with inline samples; no PrusaSlicer needed. Example: `tests/test_gcode.py`.
 - Integration tests that run the real binary go in `tests/test_server.py` and use the `prusaslicer` fixture, which **skips** when PrusaSlicer is not installed. They must never fail just because it is missing.
 - Use `tmp_path` / the `cube_stl` fixture for files. Do not commit models, `.gcode`, or `.bgcode` files, and do not write into the repo tree or the user's PrusaSlicer data directory.
 - Reset module state that tests touch (`server._config`) in a fixture, as `test_server.py` does.
-- When a change touches the stdio protocol surface (tool names, schemas), also verify with a real MCP client over stdio, not only by calling the Python functions.
