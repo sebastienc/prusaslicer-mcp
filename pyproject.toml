@@ -25,11 +25,57 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "poethepoet>=0.49.0",
     "pytest>=9.2.0",
     "pytest-asyncio>=1.5.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15,<0.16",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "integration: needs a real PrusaSlicer install; added automatically to any test that uses the `prusaslicer` fixture",
+]
+
+[tool.coverage.run]
+source = ["prusaslicer_mcp"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+# Unit tests alone reach about 99%; the floor catches a real regression without flapping on one line.
+fail_under = 95
+
+# `uv format` formats with Ruff 0.15.x, so the dev dependency is constrained to the same range to keep the
+# linter and the formatter in agreement.
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "PT", "ASYNC", "RUF", "C4", "PIE", "RET"]
+ignore = [
+    "E501",     # long lines are left to the formatter; it cannot split long strings and comments
+    "ASYNC109", # cli.run keeps an explicit `timeout` parameter on purpose
+    "ASYNC240", # small local pathlib calls inside async tools are not worth a thread hop
+]
+
+# Task runner: `uv run poe <task>`. uv has no task runner, so Poe only chains uv's own commands and the tools
+# CI also runs; CI calls these same tasks so local and CI checks cannot drift apart.
+[tool.poe.tasks]
+lint = { cmd = "ruff check", help = "Lint with Ruff" }
+lint-fix = { cmd = "ruff check --fix", help = "Lint and apply safe fixes" }
+format = { cmd = "uv format", help = "Format with Ruff (via uv format)" }
+format-check = { cmd = "uv format --check", help = "Fail if any file needs formatting" }
+typecheck = { cmd = "uv check", help = "Type-check (uv check)" }
+audit = { cmd = "uv audit", help = "Check locked dependencies for known vulnerabilities" }
+test = { cmd = "pytest -m 'not integration'", help = "Unit tests; no PrusaSlicer needed" }
+test-integration = { cmd = "pytest -m integration", help = "Integration tests; need a real PrusaSlicer" }
+test-all = { cmd = "pytest", help = "Every test (integration tests skip when PrusaSlicer is absent)" }
+cov = { cmd = "pytest -m 'not integration' --cov", help = "Unit tests with a coverage report" }
+check = { sequence = ["lint", "format-check", "typecheck", "test"], help = "Everything CI checks, apart from integration tests" }
+fix = { sequence = ["lint-fix", "format"], help = "Apply safe lint fixes, then format" }
