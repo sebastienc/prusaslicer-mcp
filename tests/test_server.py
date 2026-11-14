@@ -165,3 +165,31 @@ async def test_slice_with_profiles_ignores_a_projects_saved_settings(make_3mf, i
     # Then the profile's values win over the project's saved brim
     assert result.settings_from == "profiles"
     assert recorded_setting(result, "brim_width") != "5"
+
+
+async def test_slice_flags_a_model_that_has_an_empty_stretch_in_its_height(tmp_path, installed):
+    # Given an STL of two cubes with 10 mm of air between them, so the upper one floats
+    lower = trimesh.creation.box(extents=(20, 20, 10))
+    lower.apply_translation((0, 0, 5))
+    upper = trimesh.creation.box(extents=(20, 20, 10))
+    upper.apply_translation((0, 0, 25))
+    model = tmp_path / "floating.stl"
+    trimesh.util.concatenate([lower, upper]).export(model)
+
+    # When it is sliced with real profiles
+    result = await server.slice_model(str(model), installed.printer, installed.print_profile, installed.filament)
+
+    # Then the caller is told layers are missing, and where, from the real G-code's layer markers
+    gap_warnings = [w for w in result.warnings if w.startswith("Nothing is printed across")]
+    assert len(gap_warnings) == 1
+    assert "between z 10" in gap_warnings[0]
+
+
+async def test_slice_of_a_plain_cube_reports_no_empty_stretch(cube_stl, installed):
+    # Given a solid cube
+
+    # When it is sliced with real profiles
+    result = await server.slice_model(str(cube_stl), installed.printer, installed.print_profile, installed.filament)
+
+    # Then no layers are reported missing
+    assert not any(w.startswith("Nothing is printed across") for w in result.warnings)

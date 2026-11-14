@@ -78,6 +78,7 @@ Code asks you to approve project-scoped servers the first time; `claude mcp list
 
 ## Notes
 
+- A slice that succeeds is not always printable. A scan with holes slices without an error and with plausible statistics, but parts of its height can print nothing. `slice_model` returns PrusaSlicer's own warnings in full and adds a warning when layers skip a large stretch of the height, so read `warnings` before trusting the numbers.
 - Plain 3MF files (exported from CAD, not saved from PrusaSlicer) keep their stored coordinates, so a part modelled around the origin sits half off the bed and slicing fails with "All objects are outside of the print volume". Pass `center=true` to `slice_model` to place it in the middle of the bed. STL/OBJ files are placed automatically, and 3MF projects saved from PrusaSlicer should be sliced with `center=false` to keep their layout.
 
 - `--query-*` actions exit with status 1 on success in 2.9.7; the server judges them by their output file.

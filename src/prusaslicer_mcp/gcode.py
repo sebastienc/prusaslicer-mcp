@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import itertools
 import re
+import statistics
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -64,4 +66,60 @@ def parse_gcode_stats(path: Path) -> GcodeStats:
         filament_used_g=_float(r"^; total filament used \[g\] = ([\d.]+)", tail),
         filament_cost=_float(r"^; total filament cost = ([\d.]+)", tail),
         layer_count=layers or None,
+    )
+
+
+# A step between layers counts as a gap when it is more than this many typical layers, and at least this tall in
+# absolute terms, so fine layers and variable layer height do not trigger it.
+_GAP_LAYERS = 3
+_MIN_GAP_MM = 0.6
+
+
+class LayerGap(BaseModel):
+    """A stretch where the print jumps from one layer to a much higher one, so nothing is printed between."""
+
+    from_mm: float
+    to_mm: float
+
+
+def read_layer_heights(path: Path) -> list[float]:
+    """The height of every layer, from the `;Z:` comment PrusaSlicer writes after each `;LAYER_CHANGE`."""
+    heights: list[float] = []
+    with path.open("rb") as f:
+        for line in f:
+            if line.startswith(b";Z:"):
+                try:
+                    heights.append(float(line[3:]))
+                except ValueError:
+                    continue
+    return heights
+
+
+def find_layer_gaps(heights: list[float]) -> list[LayerGap]:
+    """Where consecutive layers jump by far more than a layer: the model has holes, or parts that float."""
+    if len(heights) < 3:
+        return []
+    pairs = list(itertools.pairwise(heights))
+    steps = [b - a for a, b in pairs]
+    upward = [step for step in steps if step > 0]  # printing objects one after another restarts at the bottom
+    if not upward:
+        return []
+    limit = max(_GAP_LAYERS * statistics.median(upward), _MIN_GAP_MM)
+    # The tolerance keeps "exactly three layers" from tripping on float noise (3 * 0.3 is 0.8999999999999999).
+    return [LayerGap(from_mm=a, to_mm=b) for (a, b), step in zip(pairs, steps, strict=True) if step > limit + 1e-6]
+
+
+def layer_gap_warning(path: Path) -> str | None:
+    """A sentence describing the gaps in a sliced model's layers, or None when there are none."""
+    heights = read_layer_heights(path)
+    gaps = find_layer_gaps(heights)
+    if not gaps:
+        return None
+    total = sum(gap.to_mm - gap.from_mm for gap in gaps)
+    first = gaps[0]
+    noun = "gap" if len(gaps) == 1 else "gaps"
+    return (
+        f"Nothing is printed across {total:.1f} mm of the {max(heights):.1f} mm height ({len(gaps)} {noun}, the first "
+        f"between z {first.from_mm:g} and {first.to_mm:g} mm). The model probably has holes or floating parts: "
+        "repair the mesh or change its orientation."
     )

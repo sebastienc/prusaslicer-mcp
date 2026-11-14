@@ -48,7 +48,7 @@ tests/               unit tests (no PrusaSlicer) plus a few integration tests; s
 |---|---|---|
 | `config.py` | Resolve `Config(executable, datadir, output_dir, timeout)` from env and platform defaults. Raises `ConfigError` (`PrusaSlicerNotFound` is a subclass) for an unusable setting. | stdlib |
 | `cli.py` | `run(config, args, timeout)` → `CliResult(returncode, stdout, stderr)`. Prepends `--datadir` when configured. Kills the process on timeout (`CliTimeout`). | `config` |
-| `gcode.py` | `parse_gcode_stats(path)` → `GcodeStats`. Rejects binary G-code. | pydantic |
+| `gcode.py` | `parse_gcode_stats(path)` → `GcodeStats`. Rejects binary G-code. `layer_gap_warning(path)` reads the `;Z:` layer markers and describes stretches where the print jumps up by more than three typical layers (and at least 0.6 mm), meaning nothing is printed there. | pydantic |
 | `slicer_output.py` | `parse_warnings(stdout)` → one string per PrusaSlicer warning. A warning is a block: a line containing "warning" plus the plain lines after it (more gaps, object name, advice), up to the next `NN => ...` progress line or the final export message. | stdlib |
 | `project.py` | `read_project(path)` → `ProjectInfo` (stored printer/print/material profile names and `KEY_SETTINGS`) or `None` when the file is not a `.3mf` that embeds `Metadata/Slic3r_PE.config`. | stdlib, pydantic |
 | `server.py` | Tool surface. Validates input, builds CLI args, shapes pydantic results. Lazily loads `Config` on first use (`get_config()`). | all of the above, `trimesh` |
@@ -82,7 +82,8 @@ sequenceDiagram
     S->>S: fail if exit != 0 or output missing
     S->>G: parse output file
     G-->>S: GcodeStats (time, filament, cost, layers)
-    S-->>C: SliceResult(gcode_path, stats, warnings)
+    S->>G: layer_gap_warning (empty stretches in the model's height)
+    S-->>C: SliceResult(gcode_path, stats, settings_from, warnings)
 ```
 
 ## Configuration
@@ -113,6 +114,7 @@ Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `Pru
 
 ## Known quirks (PrusaSlicer 2.9.7)
 
+- **A successful slice can still be unprintable.** A scan with holes slices without error and with plausible statistics, but whole stretches of its height print nothing (an 88 mm statue had four gaps totalling 33 mm). PrusaSlicer says so in a multi-line warning that it truncates (`(Some lines not shown)`) and that did not list every gap, so `slice_model` returns that whole block and also checks the G-code's layer heights itself (`layer_gap_warning`).
 - **Profile flags override a project's embedded settings.** Passing `--printer-profile`/`--print-profile`/`--material-profile` with a project 3MF makes PrusaSlicer use the plain profile values and ignore what the project saved (supports, brim, infill...). Without the flags it uses the project's own configuration. `slice_model` therefore omits them for a project when none are given ([ADR 0007](../decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md)).
 - `--query-*` actions **exit with status 1 even when they succeed**. `_query_json` therefore checks that the `-o` file exists, is non-empty, and parses, instead of the exit code.
 - Printer *model* names in the vendor bundles are wx-escaped (`&&` renders as `&` in the GUI), while profile names use a single `&` (e.g. `Original Prusa MINI & MINI+ Input Shaper`). `list_printers` unescapes the model `name` for display (`_display_name` in `server.py`); `id` and every `printer_profile` value are passed through untouched. Always pass the `printer_profile` value, not the model name.
