@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from . import cli
 from .config import Config, ConfigError, load_config
 from .gcode import GcodeStats, layer_gap_warning, parse_gcode_stats
+from .preview_gcode import render_layer, render_profile, scan_gcode
 from .preview_model import SHEET_ORDER, render_model, to_png
 from .project import ProjectInfo, read_project
 from .slicer_output import parse_warnings
@@ -34,6 +35,7 @@ mcp = MCPServer(
 _READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 
 _MODEL_SUFFIXES = {".stl", ".3mf", ".obj", ".amf", ".step", ".stp"}
+_GCODE_SUFFIXES = {".gcode", ".gco"}
 _OVERRIDE_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 # Flags the server sets itself, plus `save`, which would write into the user's PrusaSlicer data directory.
 # An override with one of these names would silently undo a guarantee (e.g. binary_gcode=1 beats our text G-code).
@@ -118,6 +120,18 @@ def _model_path(path: str) -> Path:
         raise ToolError(f"Model file not found: {p}")
     if p.suffix.lower() not in _MODEL_SUFFIXES:
         raise ToolError(f"Unsupported model type '{p.suffix}'. Supported: {sorted(_MODEL_SUFFIXES)}")
+    return p
+
+
+def _gcode_path(path: str) -> Path:
+    p = Path(path).expanduser().resolve()
+    if not p.is_file():
+        raise ToolError(f"G-code file not found: {p}")
+    if p.suffix.lower() not in _GCODE_SUFFIXES:
+        raise ToolError(f"Unsupported G-code type '{p.suffix}'. Supported: {sorted(_GCODE_SUFFIXES)}")
+    with p.open("rb") as f:
+        if f.read(4) == b"GCDE":
+            raise ToolError("Binary G-code (.bgcode) cannot be drawn; slice_model always writes text G-code.")
     return p
 
 
@@ -347,6 +361,62 @@ def preview_model(
         "stored, centred. PrusaSlicer also prints with z up, so a model that looks to be lying on its side would be "
         "printed that way."
     )
+    return [Image(data=to_png(picture), format="png"), caption]
+
+
+GcodeView = Literal["layer", "profile"]
+
+
+@mcp.tool(annotations=_READ_ONLY)
+def preview_gcode(
+    gcode_path: Annotated[
+        str, Field(description="Absolute path to a text G-code file, such as the gcode_path slice_model returns")
+    ],
+    view: Annotated[
+        GcodeView,
+        Field(
+            description="layer (default): one layer's toolpaths coloured by feature, with the layer below as a faint "
+            "ghost. profile: front and side silhouettes of everything printed, where a stretch of height with nothing "
+            "printed shows as a blank band."
+        ),
+    ] = "layer",
+    layer: Annotated[
+        int | None,
+        Field(description="Layer number for view=layer, from 1 (the first layer); default the middle layer", ge=1),
+    ] = None,
+    size: Annotated[int, Field(description="Picture width and height in pixels", ge=128, le=1024)] = 640,
+) -> list[Image | str]:
+    """Draw a picture of sliced G-code, to check what will really be printed before trusting the statistics.
+
+    Use view=profile after slice_model: it shows at a glance if parts of the print float or whole stretches of the
+    height are empty. Use view=layer to inspect one layer's perimeters, infill and supports."""
+    path = _gcode_path(gcode_path)
+    if view == "profile" and layer is not None:
+        raise ToolError("layer is only used with view=layer")
+    try:
+        scan = scan_gcode(path)
+        total = len(scan.layer_heights)
+        number = layer if layer is not None else (total + 1) // 2
+        picture = render_layer(path, scan, number, size) if view == "layer" else render_profile(path, scan, size)
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    if view == "layer":
+        caption = (
+            f"{path.name}, layer {number} of {total} (z {scan.layer_heights[number - 1]:g} mm). The legend names this "
+            "layer's features; the faint grey is the layer below. Every layer is drawn on the same scale."
+        )
+    else:
+        caption = (
+            f"{path.name}: front (x) and side (y) silhouettes of everything printed, {total} layers, "
+            f"{max(scan.layer_heights):.1f} mm tall, on a 10 mm grid. A blank band across both panels means nothing "
+            "was printed at that height."
+        )
+        gap_warning = layer_gap_warning(path)
+        if gap_warning:
+            caption += " " + gap_warning
+    if scan.arcs_skipped:
+        noun = "move" if scan.arcs_skipped == 1 else "moves"
+        caption += f" {scan.arcs_skipped} arc {noun} (G2/G3) {'is' if scan.arcs_skipped == 1 else 'are'} not drawn."
     return [Image(data=to_png(picture), format="png"), caption]
 
 
