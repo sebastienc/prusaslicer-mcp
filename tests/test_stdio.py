@@ -12,9 +12,17 @@ from contextlib import asynccontextmanager
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.types import CallToolResult, TextContent
 
 READ_ONLY_TOOLS = {"list_printers", "list_profiles", "inspect_model"}
 ALL_TOOLS = READ_ONLY_TOOLS | {"slice_model"}
+
+
+def first_text(result: CallToolResult) -> str:
+    """The text of a result's first content block; fails the test if that block is not text."""
+    block = result.content[0]
+    assert isinstance(block, TextContent), f"expected text, got {type(block).__name__}"
+    return block.text
 
 
 @asynccontextmanager
@@ -100,6 +108,7 @@ async def test_the_server_tells_clients_that_profile_names_must_match_exactly():
     # When a client initialises
     async with connected() as (initialized, _):
         # Then the server instructions carry the rule that trips callers up most often
+        assert initialized.instructions is not None
         assert "Profile names must match exactly" in initialized.instructions
 
 
@@ -111,7 +120,7 @@ async def test_a_failure_reaches_the_client_as_readable_error_text(tmp_path):
 
     # Then the call is flagged as an error and says what was wrong
     assert result.is_error is True
-    assert "Model file not found" in result.content[0].text
+    assert "Model file not found" in first_text(result)
 
 
 async def test_a_misconfigured_server_explains_itself_to_the_client(tmp_path):
@@ -123,7 +132,7 @@ async def test_a_misconfigured_server_explains_itself_to_the_client(tmp_path):
 
     # Then the error names the setting to fix
     assert result.is_error is True
-    assert "PRUSASLICER_PATH" in result.content[0].text
+    assert "PRUSASLICER_PATH" in first_text(result)
 
 
 async def test_a_successful_call_returns_structured_content(cube_stl):
