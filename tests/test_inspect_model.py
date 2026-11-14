@@ -2,11 +2,10 @@
 
 import pytest
 import trimesh
+from conftest import PROJECT_CONFIG
 from mcp.server.mcpserver.exceptions import ToolError
 
 from prusaslicer_mcp import server
-
-from conftest import PROJECT_CONFIG
 
 BED = {"bed_width": 180, "bed_depth": 180, "max_height": 180}
 
@@ -54,7 +53,9 @@ def test_fit_is_not_judged_without_a_bed(tmp_path):
     assert info.fits_bed is None
 
 
-@pytest.mark.parametrize("given", [{"bed_width": 180}, {"bed_width": 180, "bed_depth": 180}], ids=["width-only", "no-height"])
+@pytest.mark.parametrize(
+    "given", [{"bed_width": 180}, {"bed_width": 180, "bed_depth": 180}], ids=["width-only", "no-height"]
+)
 def test_fit_is_not_judged_with_an_incomplete_bed(tmp_path, given):
     # Given a cube and only some of the three bed dimensions
     model = save(cube(), tmp_path / "cube.stl")
@@ -241,6 +242,7 @@ def test_a_project_3mf_reports_the_profiles_and_settings_saved_in_it(make_3mf):
     info = server.inspect_model(str(model))
 
     # Then the stored profile names and the settings that shape a print are reported
+    assert info.project is not None
     assert info.project.printer_profile == "Original Prusa i3 MK3S & MK3S+ MMU2S Single"
     assert info.project.print_profile == "0.20mm QUALITY @MK3"
     assert info.project.material_profile == "Prusament PLA"

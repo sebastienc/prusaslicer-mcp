@@ -34,7 +34,7 @@ async def run(config: Config, args: list[str], timeout: float | None = None) -> 
     )
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout or config.timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         raise CliTimeout(f"PrusaSlicer did not finish within {timeout or config.timeout:.0f}s") from None

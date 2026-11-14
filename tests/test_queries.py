@@ -19,7 +19,9 @@ from prusaslicer_mcp.config import Config
 def prusaslicer_query(tmp_path, monkeypatch):
     """A fake CLI for --query-* actions: set `.state` to choose what PrusaSlicer writes and says."""
     monkeypatch.setattr(
-        server, "_config", Config(executable=tmp_path / "PrusaSlicer", datadir=None, output_dir=tmp_path / "out", timeout=5)
+        server,
+        "_config",
+        Config(executable=tmp_path / "PrusaSlicer", datadir=None, output_dir=tmp_path / "out", timeout=5),
     )
     calls: list[SimpleNamespace] = []
     state = SimpleNamespace(payload=None, raw=None, returncode=1, stdout="", stderr="")
@@ -46,7 +48,11 @@ PRINTER_PAYLOAD = {
                 {
                     "name": 0.4,
                     "printer_profiles": [
-                        {"name": "Maker One 0.4", "extruders_cnt": 2, "bed": {"width": 200, "height": 150, "max_print_height": 100}}
+                        {
+                            "name": "Maker One 0.4",
+                            "extruders_cnt": 2,
+                            "bed": {"width": 200, "height": 150, "max_print_height": 100},
+                        }
                     ],
                 }
             ],
@@ -184,7 +190,9 @@ async def test_list_printers_maps_the_query_fields(prusaslicer_query):
 async def test_list_printers_leaves_bed_fields_empty_when_the_profile_has_no_bed(prusaslicer_query):
     # Given a printer profile without bed information
     prusaslicer_query.state.payload = {
-        "printer_models": [{"id": "X", "name": "X", "variants": [{"name": 0.4, "printer_profiles": [{"name": "X 0.4"}]}]}]
+        "printer_models": [
+            {"id": "X", "name": "X", "variants": [{"name": 0.4, "printer_profiles": [{"name": "X 0.4"}]}]}
+        ]
     }
 
     # When the printers are listed
@@ -192,7 +200,12 @@ async def test_list_printers_leaves_bed_fields_empty_when_the_profile_has_no_bed
 
     # Then the missing values are None rather than an error
     variant = model.variants[0]
-    assert (variant.bed_width, variant.bed_depth, variant.max_print_height, variant.extruders) == (None, None, None, None)
+    assert (variant.bed_width, variant.bed_depth, variant.max_print_height, variant.extruders) == (
+        None,
+        None,
+        None,
+        None,
+    )
 
 
 async def test_list_printers_reports_the_requested_technology_when_the_model_omits_it(prusaslicer_query):

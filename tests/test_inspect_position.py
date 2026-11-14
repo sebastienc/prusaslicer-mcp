@@ -4,7 +4,6 @@ PrusaSlicer places STL/OBJ files itself, but keeps a 3MF's stored coordinates. A
 the origin therefore fits the bed by size yet cannot be sliced without slice_model(center=true).
 """
 
-import pytest
 import trimesh
 
 from prusaslicer_mcp import server
