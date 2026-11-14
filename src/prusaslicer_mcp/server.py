@@ -83,6 +83,12 @@ class PrinterModel(BaseModel):
     variants: list[PrinterVariant]
 
 
+def _display_name(name: str) -> str:
+    # Vendor bundles store model names wx-escaped ("&&" renders as "&" in the GUI). Unescape so the
+    # name reads naturally and matches the real profile names, which use a single "&".
+    return name.replace("&&", "&")
+
+
 @mcp.tool(annotations=_READ_ONLY)
 async def list_printers(
     technology: Annotated[str, Field(description="'FFF' (filament) or 'SLA' (resin)")] = "FFF",
@@ -108,7 +114,7 @@ async def list_printers(
                         max_print_height=bed.get("max_print_height"),
                     )
                 )
-        models.append(PrinterModel(id=m["id"], name=m["name"], technology=m.get("technology", technology), variants=variants))
+        models.append(PrinterModel(id=m["id"], name=_display_name(m["name"]), technology=m.get("technology", technology), variants=variants))
     return models
 
 

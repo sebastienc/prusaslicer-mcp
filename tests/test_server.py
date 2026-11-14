@@ -16,6 +16,7 @@ def _reset_config(prusaslicer, tmp_path, monkeypatch):
 async def test_list_printers_and_profiles():
     printers = await server.list_printers()
     assert printers and all(p.variants for p in printers)
+    assert all("&&" not in p.name for p in printers)
     profile = printers[0].variants[0].printer_profile
     profiles = await server.list_profiles(profile)
     assert profiles.print_profiles

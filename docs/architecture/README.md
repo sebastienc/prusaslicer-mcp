@@ -109,7 +109,7 @@ Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `Pru
 ## Known quirks (PrusaSlicer 2.9.7)
 
 - `--query-*` actions **exit with status 1 even when they succeed**. `_query_json` therefore checks that the `-o` file exists, is non-empty, and parses, instead of the exit code.
-- Printer profile *display* names can contain `&&` (GUI escaping) in model names, while the profile name itself uses `&` (e.g. `Original Prusa MINI & MINI+ Input Shaper`). Always pass the `printer_profile` value returned by `list_printers`.
+- Printer *model* names in the vendor bundles are wx-escaped (`&&` renders as `&` in the GUI), while profile names use a single `&` (e.g. `Original Prusa MINI & MINI+ Input Shaper`). `list_printers` unescapes the model `name` for display (`_display_name` in `server.py`); `id` and every `printer_profile` value are passed through untouched. Always pass the `printer_profile` value, not the model name.
 - Recent profiles default to **binary G-code**; we force text output ([ADR 0005](../decisions/0005-always-slice-to-text-gcode.md)).
 - CLI slicing places the model according to PrusaSlicer's own arrange/transform rules; we pass no transform flags yet.
 
