@@ -205,7 +205,10 @@ def inspect_model(
     import trimesh
 
     path = _model_path(model_path)
-    mesh = trimesh.load(path, force="mesh")
+    try:
+        mesh = trimesh.load(path, force="mesh")
+    except Exception as e:  # trimesh's parsers raise assorted types on bad input (BadZipFile, ValueError, ImportError, ...)
+        raise ToolError(f"Could not read {path.name} as a {path.suffix.lower()} model: {e}") from e
     if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
         raise ToolError("Could not load a triangle mesh from this file.")
 
