@@ -29,6 +29,11 @@ _READ_ONLY = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHi
 
 _MODEL_SUFFIXES = {".stl", ".3mf", ".obj", ".amf", ".step", ".stp"}
 _OVERRIDE_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
+# Flags the server sets itself, plus `save`, which would write into the user's PrusaSlicer data directory.
+# An override with one of these names would silently undo a guarantee (e.g. binary_gcode=1 beats our text G-code).
+_RESERVED_OVERRIDES = frozenset(
+    {"export_gcode", "binary_gcode", "printer_profile", "print_profile", "material_profile", "output", "datadir", "save", "center"}
+)
 _PROFILE_NOT_FOUND = re.compile(r"profile '.*' wasn't found", re.IGNORECASE)
 _PROFILE_HINT = " (hint: profile names must match exactly; get them from list_printers and list_profiles)"
 
@@ -271,7 +276,7 @@ async def slice_model(
     material_profile: Annotated[str, Field(description="Exact filament profile name, from list_profiles")],
     overrides: Annotated[
         dict[str, str] | None,
-        Field(description="Optional PrusaSlicer settings, e.g. {'fill_density': '25%', 'perimeters': '3'}. Keys are config option names (see PrusaSlicer --help-fff)."),
+        Field(description="Optional PrusaSlicer settings, e.g. {'fill_density': '25%', 'perimeters': '3'}. Keys are config option names (see PrusaSlicer --help-fff); options the server sets itself (profiles, output, binary_gcode, datadir, save) are rejected."),
     ] = None,
     output_path: Annotated[str | None, Field(description="Where to write the G-code (default: <output dir>/<model>.gcode)")] = None,
     center: Annotated[
@@ -288,12 +293,7 @@ async def slice_model(
     cfg = get_config()
     model = _model_path(model_path)
 
-    if output_path:
-        out = Path(output_path).expanduser().resolve()
-    else:
-        cfg.output_dir.mkdir(parents=True, exist_ok=True)
-        out = cfg.output_dir / f"{model.stem}.gcode"
-    out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(output_path).expanduser().resolve() if output_path else cfg.output_dir / f"{model.stem}.gcode"
 
     args = [
         "--export-gcode",
@@ -305,6 +305,8 @@ async def slice_model(
     for key, value in (overrides or {}).items():
         if not _OVERRIDE_KEY.match(key):
             raise ToolError(f"Invalid override key: {key!r}")
+        if key in _RESERVED_OVERRIDES:
+            raise ToolError(f"Override {key!r} is controlled by the server and cannot be set")
         if "\n" in value or "\r" in value:
             raise ToolError(f"Invalid override value for {key!r}")
         args.append(f"--{key.replace('_', '-')}={value}")
@@ -313,6 +315,8 @@ async def slice_model(
         args += ["--center", f"{x:g},{y:g}"]
     args += ["--output", str(out), str(model)]
 
+    # Everything is validated by now, so a refused request leaves nothing behind on disk.
+    out.parent.mkdir(parents=True, exist_ok=True)
     result = await _run(cfg, args)
     if result.returncode != 0 or not out.is_file():
         detail = _with_profile_hint((result.stderr.strip() or result.stdout.strip())[-2000:])

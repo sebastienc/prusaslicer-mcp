@@ -79,7 +79,7 @@ Code asks you to approve project-scoped servers the first time; `claude mcp list
 - Plain 3MF files (exported from CAD, not saved from PrusaSlicer) keep their stored coordinates, so a part modelled around the origin sits half off the bed and slicing fails with "All objects are outside of the print volume". Pass `center=true` to `slice_model` to place it in the middle of the bed. STL/OBJ files are placed automatically, and 3MF projects saved from PrusaSlicer should be sliced with `center=false` to keep their layout.
 
 - `--query-*` actions exit with status 1 on success in 2.9.7; the server judges them by their output file.
-- Setting overrides use PrusaSlicer config option names, e.g. `{"fill_density": "25%"}` (see `PrusaSlicer --help-fff`).
+- Setting overrides use PrusaSlicer config option names, e.g. `{"fill_density": "25%"}` (see `PrusaSlicer --help-fff`). Options the server sets itself (profiles, output, `binary_gcode`, `datadir`, `save`) are rejected.
 
 ## Limitations
 
