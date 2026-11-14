@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from . import cli
 from .config import Config, ConfigError, load_config
-from .gcode import GcodeStats, parse_gcode_stats
+from .gcode import GcodeStats, layer_gap_warning, parse_gcode_stats
 from .project import ProjectInfo, read_project
 from .slicer_output import parse_warnings
 
@@ -410,6 +410,10 @@ async def slice_model(
         stats = parse_gcode_stats(out)
     except ValueError as e:
         raise ToolError(str(e)) from e
+    # PrusaSlicer does not always say when layers are missing, and the statistics look normal either way.
+    gap_warning = layer_gap_warning(out)
+    if gap_warning:
+        warnings.append(gap_warning)
     return SliceResult(
         gcode_path=str(out),
         stats=stats,

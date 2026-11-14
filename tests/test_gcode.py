@@ -2,7 +2,7 @@
 
 import pytest
 
-from prusaslicer_mcp.gcode import parse_gcode_stats
+from prusaslicer_mcp.gcode import LayerGap, find_layer_gaps, layer_gap_warning, parse_gcode_stats, read_layer_heights
 
 SAMPLE = """;LAYER_CHANGE
 G1 X1 Y1
@@ -295,3 +295,197 @@ def test_total_weight_and_cost_are_not_summed_twice(write_gcode):
 
     # Then the totals PrusaSlicer wrote are used as they are
     assert (stats.filament_used_g, stats.filament_cost) == (7.0, 0.3)
+
+
+# --------------------------------------------------------------------------- layers that were never printed
+
+
+def layers(*heights: float) -> str:
+    """G-code with a layer change at each height, in the form PrusaSlicer writes."""
+    return "".join(f";LAYER_CHANGE\n;Z:{h}\n;HEIGHT:0.2\nG1 X1 Y1\n" for h in heights)
+
+
+def test_layer_heights_are_read_in_order_from_the_z_comments(write_gcode):
+    # Given G-code with three layers, a travel move to some Z, and other comments that look similar
+    path = write_gcode(layers(0.2, 0.4) + "G1 Z5 F720\n; Z:99 is not a marker\nG1 X1 ;Z:77 nor is this\n" + layers(0.6))
+
+    # When the layer heights are read
+    heights = read_layer_heights(path)
+
+    # Then only the ;Z: markers count
+    assert heights == [0.2, 0.4, 0.6]
+
+
+def test_layer_heights_survive_windows_line_endings(write_gcode):
+    # Given G-code with CRLF line endings
+    path = write_gcode(layers(0.2, 0.4).replace("\n", "\r\n"))
+
+    # When the layer heights are read
+    heights = read_layer_heights(path)
+
+    # Then the values are clean numbers
+    assert heights == [0.2, 0.4]
+
+
+def test_g_code_without_layer_markers_has_no_layer_heights(write_gcode):
+    # Given G-code with no ;Z: comments
+    path = write_gcode("G1 X1 Y1\n")
+
+    # When the layer heights are read
+    heights = read_layer_heights(path)
+
+    # Then there are none
+    assert heights == []
+
+
+def steps(start: float, step: float, count: int) -> list[float]:
+    return [round(start + step * i, 4) for i in range(count)]
+
+
+@pytest.mark.parametrize(
+    "heights",
+    [
+        steps(0.2, 0.2, 50),
+        [0.3, *steps(0.45, 0.15, 40)],
+        [0.2, 0.27, 0.34, 0.5, 0.7, 0.95, 1.2, 1.5, 1.8, 2.1, 2.4],
+        [0.2, 0.4, 0.6, 0.2, 0.4, 0.6],
+        [*steps(0.2, 0.2, 25), 0.2, 0.4, 0.6],
+        [0.2, 0.4],
+        [],
+    ],
+    ids=[
+        "uniform",
+        "thick-first-layer",
+        "variable-layer-height",
+        "objects-printed-one-after-another",
+        "tall-object-then-short-object",
+        "too-few-layers",
+        "none",
+    ],
+)
+def test_a_normal_print_has_no_gaps(heights):
+    # Given layer heights from an ordinary print
+
+    # When gaps are looked for
+    gaps = find_layer_gaps(heights)
+
+    # Then there are none
+    assert gaps == []
+
+
+def test_a_jump_far_larger_than_a_layer_is_a_gap():
+    # Given a print that stops at 0.4 mm and carries on at 9 mm
+    heights = [0.2, 0.4, 9.0, 9.2, 9.4]
+
+    # When gaps are looked for
+    gaps = find_layer_gaps(heights)
+
+    # Then the empty stretch is reported
+    assert gaps == [LayerGap(from_mm=0.4, to_mm=9.0)]
+
+
+def test_every_gap_is_reported_in_order():
+    # Given a print with two separate empty stretches
+    heights = [0.2, 0.4, 9.0, 9.2, 9.4, 12.0, 12.2, 12.4]
+
+    # When gaps are looked for
+    gaps = find_layer_gaps(heights)
+
+    # Then both are reported, earliest first
+    assert gaps == [LayerGap(from_mm=0.4, to_mm=9.0), LayerGap(from_mm=9.4, to_mm=12.0)]
+
+
+@pytest.mark.parametrize(
+    ("jump", "is_gap"),
+    [(0.6, False), (0.8, True)],
+    ids=["exactly-three-layers-is-normal", "four-layers-is-a-gap"],
+)
+def test_the_gap_threshold_is_three_times_the_typical_layer(jump, is_gap):
+    # Given 0.2 mm layers with one larger step
+    heights = [*steps(0.2, 0.2, 5), 1.0 + jump, 1.2 + jump, 1.4 + jump]
+
+    # When gaps are looked for
+    gaps = find_layer_gaps(heights)
+
+    # Then a step of three layers is allowed and anything bigger is a gap
+    assert bool(gaps) is is_gap
+
+
+@pytest.mark.parametrize(
+    ("jump", "is_gap"),
+    [(0.9, False), (1.2, True)],
+    ids=["exactly-three-thick-layers-is-normal", "four-thick-layers-is-a-gap"],
+)
+def test_the_gap_threshold_scales_with_the_layer_height(jump, is_gap):
+    # Given 0.3 mm layers, where three layers (0.9 mm) is above the 0.6 mm absolute minimum, with one larger step
+    heights = [*steps(0.3, 0.3, 5), 1.5 + jump, 1.8 + jump, 2.1 + jump]
+
+    # When gaps are looked for
+    gaps = find_layer_gaps(heights)
+
+    # Then three layers is still allowed and anything bigger is a gap
+    assert bool(gaps) is is_gap
+
+
+def test_floating_point_error_does_not_turn_three_layers_into_a_gap():
+    # Given heights built by adding up layer thicknesses, as a slicer does, so a step of exactly three layers
+    # comes out as 0.6000000000000001
+    heights, z = [], 0.0
+    for thickness in [0.2, 0.2, 0.2, 0.2, 0.2, 0.6, 0.2, 0.2]:
+        z += thickness
+        heights.append(z)
+
+    # When gaps are looked for
+    gaps = find_layer_gaps(heights)
+
+    # Then the rounding error is tolerated
+    assert gaps == []
+
+
+def test_a_small_absolute_step_is_never_a_gap_even_on_very_fine_layers():
+    # Given 0.05 mm layers with one 0.5 mm step, which is ten layers but still only half a millimetre
+    heights = [*steps(0.05, 0.05, 6), 0.8, 0.85, 0.9]
+
+    # When gaps are looked for
+    gaps = find_layer_gaps(heights)
+
+    # Then it is not worth a warning
+    assert gaps == []
+
+
+def test_no_warning_when_nothing_is_missing(write_gcode):
+    # Given G-code for a print with no empty stretch
+    path = write_gcode(layers(*steps(0.2, 0.2, 20)))
+
+    # When the gap warning is built
+    warning = layer_gap_warning(path)
+
+    # Then there is none
+    assert warning is None
+
+
+def test_the_warning_says_how_much_is_missing_and_where_it_starts(write_gcode):
+    # Given G-code with two empty stretches: 0.4 to 9 mm (8.6 mm) and 9.4 to 12 mm (2.6 mm)
+    path = write_gcode(layers(0.2, 0.4, 9.0, 9.2, 9.4, 12.0, 12.2, 12.4))
+
+    # When the gap warning is built
+    warning = layer_gap_warning(path)
+
+    # Then it gives the total, the number of gaps, the first one, and what to do about it
+    assert warning is not None
+    assert "11.2 mm of the 12.4 mm" in warning
+    assert "2 gaps" in warning
+    assert "between z 0.4 and 9 mm" in warning
+    assert "repair" in warning
+
+
+def test_the_warning_uses_the_singular_for_one_gap(write_gcode):
+    # Given G-code with a single empty stretch
+    path = write_gcode(layers(0.2, 0.4, 9.0, 9.2, 9.4))
+
+    # When the gap warning is built
+    warning = layer_gap_warning(path)
+
+    # Then it says "1 gap", not "1 gaps"
+    assert warning is not None
+    assert "1 gap," in warning

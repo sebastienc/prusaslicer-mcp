@@ -524,3 +524,48 @@ async def test_a_multi_line_slicer_warning_is_returned_whole(fake_prusaslicer, m
     assert len(result.warnings) == 1
     assert "between 9.2 and 11.4" in result.warnings[0]
     assert "Try to repair the model." in result.warnings[0]
+
+
+# --------------------------------------------------------------------------- layers that were never printed
+
+
+def gcode_with_layers(*heights: float) -> bytes:
+    layers = "".join(f";LAYER_CHANGE\n;Z:{h}\n;HEIGHT:0.2\nG1 X1 Y1\n" for h in heights)
+    return (layers + FOOTER).encode()
+
+
+async def test_a_slice_with_an_empty_stretch_is_flagged_even_if_prusaslicer_said_nothing(fake_prusaslicer, model):
+    # Given G-code whose layers jump from 0.4 mm to 9 mm, and a PrusaSlicer that printed no warning
+    fake_prusaslicer.state.gcode = gcode_with_layers(0.2, 0.4, 9.0, 9.2, 9.4)
+
+    # When the model is sliced
+    result = await slice_it(model)
+
+    # Then the caller is warned that part of the height is empty
+    assert len(result.warnings) == 1
+    assert "Nothing is printed across" in result.warnings[0]
+    assert "between z 0.4 and 9 mm" in result.warnings[0]
+
+
+async def test_the_empty_stretch_warning_comes_after_prusaslicers_own(fake_prusaslicer, model):
+    # Given both PrusaSlicer's warning and a gap in the layers
+    fake_prusaslicer.state.gcode = gcode_with_layers(0.2, 0.4, 9.0, 9.2, 9.4)
+    fake_prusaslicer.state.stdout = "print warning: Empty layer between 0.4 and 9.\n"
+
+    # When the model is sliced
+    result = await slice_it(model)
+
+    # Then PrusaSlicer's warning comes first, followed by ours
+    assert result.warnings[0].startswith("print warning: Empty layer")
+    assert result.warnings[1].startswith("Nothing is printed across")
+
+
+async def test_a_slice_without_gaps_adds_no_empty_stretch_warning(fake_prusaslicer, model):
+    # Given G-code with evenly spaced layers
+    fake_prusaslicer.state.gcode = gcode_with_layers(0.2, 0.4, 0.6, 0.8, 1.0)
+
+    # When the model is sliced
+    result = await slice_it(model)
+
+    # Then there are no warnings
+    assert result.warnings == []
