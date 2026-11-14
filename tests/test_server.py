@@ -9,6 +9,7 @@ from conftest import PROJECT_CONFIG
 from mcp.server.mcpserver.exceptions import ToolError
 
 from prusaslicer_mcp import server
+from prusaslicer_mcp.preview_gcode import scan_gcode
 
 
 @pytest.fixture(autouse=True)
@@ -193,3 +194,118 @@ async def test_slice_of_a_plain_cube_reports_no_empty_stretch(cube_stl, installe
 
     # Then no layers are reported missing
     assert not any(w.startswith("Nothing is printed across") for w in result.warnings)
+
+
+# --------------------------------------------------------------------------- transforms on real PrusaSlicer output
+
+
+@pytest.fixture
+def bar_stl(tmp_path):
+    """A 10 x 20 x 30 mm box, so rotating or scaling it changes the number of layers in a predictable way."""
+    path = tmp_path / "bar.stl"
+    trimesh.creation.box(extents=(10, 20, 30)).export(path)
+    return path
+
+
+def ratio(numerator: float | None, denominator: float | None) -> float:
+    """numerator / denominator, failing clearly if a statistic was not reported."""
+    assert numerator is not None
+    assert denominator is not None
+    return numerator / denominator
+
+
+async def slice_bar(model, installed, **extra):
+    return await server.slice_model(str(model), installed.printer, installed.print_profile, installed.filament, **extra)
+
+
+async def test_rotating_about_x_stands_the_box_on_its_side(bar_stl, installed):
+    # Given a box 30 mm tall and 20 mm deep, sliced as it is and rotated 90 degrees about X
+    plain = await slice_bar(bar_stl, installed)
+
+    # When it is rotated 90 degrees about X
+    rotated = await slice_bar(bar_stl, installed, rotate_x=90)
+
+    # Then it is now 20 mm tall, so it has two thirds of the layers
+    assert ratio(rotated.stats.layer_count, plain.stats.layer_count) == pytest.approx(20 / 30, abs=0.03)
+
+
+async def test_scale_doubles_the_height(bar_stl, installed):
+    # Given a box sliced at its own size
+    plain = await slice_bar(bar_stl, installed)
+
+    # When it is scaled by a factor of 2
+    scaled = await slice_bar(bar_stl, installed, scale=2)
+
+    # Then it is twice as tall, so it has twice the layers
+    assert ratio(scaled.stats.layer_count, plain.stats.layer_count) == pytest.approx(2.0, abs=0.05)
+
+
+async def test_scale_to_fit_shrinks_the_box_into_the_given_volume(bar_stl, installed):
+    # Given a box 30 mm tall
+
+    # When it is scaled to fit a 15 mm cube
+    plain = await slice_bar(bar_stl, installed)
+    fitted = await slice_bar(bar_stl, installed, scale_to_fit=[15, 15, 15])
+
+    # Then the tallest side is halved, so it has half the layers
+    assert ratio(fitted.stats.layer_count, plain.stats.layer_count) == pytest.approx(0.5, abs=0.03)
+
+
+async def test_copies_print_that_many_objects(bar_stl, installed):
+    # Given a box sliced once
+    one = await slice_bar(bar_stl, installed)
+
+    # When three copies are requested
+    three = await slice_bar(bar_stl, installed, copies=3)
+
+    # Then about three times the filament is used, and the layers are unchanged
+    assert ratio(three.stats.filament_used_g, one.stats.filament_used_g) == pytest.approx(3.0, rel=0.1)
+    assert three.stats.layer_count == one.stats.layer_count
+
+
+async def test_split_brings_separate_solids_together_on_the_bed(tmp_path, installed):
+    # Given one STL holding two solids 60 mm apart
+    left = trimesh.creation.box(extents=(20, 20, 10))
+    right = trimesh.creation.box(extents=(10, 10, 30))
+    right.apply_translation((60, 0, 0))
+    both = trimesh.util.concatenate([left, right])
+    model = tmp_path / "two.stl"
+    both.export(model)
+
+    # When it is sliced as one object and then split (each width is measured before the next slice, because both
+    # write the same default file)
+    def printed_width(result) -> float:
+        extent = scan_gcode(Path(result.gcode_path)).x_range
+        return extent[1] - extent[0]
+
+    plain_width = printed_width(await slice_bar(model, installed))
+    split_width = printed_width(await slice_bar(model, installed, split=True))
+
+    # Then PrusaSlicer re-arranges the separated solids, so the printed width shrinks
+    assert split_width < plain_width * 0.7
+
+
+async def test_a_projects_saved_settings_survive_a_rotation(make_3mf):
+    # Given a project that saves a 5 mm brim, sliced as saved
+    project = make_3mf(config=PROJECT_CONFIG)
+    plain = await server.slice_model(str(project))
+
+    # When it is sliced rotated about X with no profiles
+    rotated = await server.slice_model(str(project), rotate_x=45)
+
+    # Then it still uses the project's settings, and the model really was rotated
+    assert rotated.settings_from == "project"
+    assert recorded_setting(rotated, "brim_width") == "5"
+    assert rotated.stats.layer_count != plain.stats.layer_count
+
+
+async def test_a_plain_3mf_can_be_rotated_and_centred_together(origin_cube_3mf, installed):
+    # Given a plain 3MF modelled around the origin, which only slices once it is centred on the bed
+
+    # When it is rotated and centred
+    result = await server.slice_model(
+        str(origin_cube_3mf), installed.printer, installed.print_profile, installed.filament, rotate_x=90, center=True
+    )
+
+    # Then it slices
+    assert result.stats.layer_count
