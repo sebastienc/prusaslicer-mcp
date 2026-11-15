@@ -124,3 +124,54 @@ def layer_gap_warning(path: Path) -> str | None:
         "lying the wrong way up (scans are often Y-up): rotate it so its flat base is down. Less often the mesh "
         "has holes: repair it."
     )
+
+
+def filament_by_feature(path: Path) -> dict[str, float]:
+    """Millimetres of filament extruded for each `;TYPE:` in the G-code (Perimeter, Support material, ...).
+
+    Counts the extruding moves, arcs (`G2`/`G3`) included, and nothing else: a retraction and the move that undoes
+    it are not extrusion, so only a move that goes somewhere (has X or Y) adds to a feature. Works with relative
+    (`M83`) and absolute (`M82`) extrusion. Whatever is printed before the first `;TYPE:` (the start G-code) is
+    left out.
+    """
+    totals: dict[str, float] = {}
+    feature = ""
+    relative = False
+    reached = 0.0  # absolute mode: the furthest the extruder has gone, so un-retracting adds nothing
+    with path.open("rb") as handle:
+        for raw in handle:
+            line = raw.decode("latin-1")
+            if line.startswith(";"):
+                if line.startswith(";TYPE:"):
+                    feature = line[6:].strip()
+                continue
+            code = line.split(";", 1)[0].split()
+            if not code:
+                continue
+            command = code[0]
+            if command == "M83":
+                relative = True
+            elif command == "M82":
+                relative = False
+            elif command == "G92":
+                for token in code[1:]:
+                    if token[0] == "E":
+                        reached = float(token[1:])
+            elif command in ("G1", "G2", "G3"):
+                extruded: float | None = None
+                goes_somewhere = False
+                for token in code[1:]:
+                    if token[0] in "XY":
+                        goes_somewhere = True
+                    elif token[0] == "E":
+                        extruded = float(token[1:])
+                if extruded is None:
+                    continue
+                if relative:
+                    amount = extruded
+                else:
+                    amount = max(0.0, extruded - reached)
+                    reached = max(reached, extruded)
+                if goes_somewhere and amount > 0 and feature:
+                    totals[feature] = totals.get(feature, 0.0) + amount
+    return totals

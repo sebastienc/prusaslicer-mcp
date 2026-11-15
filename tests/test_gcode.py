@@ -2,7 +2,14 @@
 
 import pytest
 
-from prusaslicer_mcp.gcode import LayerGap, find_layer_gaps, layer_gap_warning, parse_gcode_stats, read_layer_heights
+from prusaslicer_mcp.gcode import (
+    LayerGap,
+    filament_by_feature,
+    find_layer_gaps,
+    layer_gap_warning,
+    parse_gcode_stats,
+    read_layer_heights,
+)
 
 SAMPLE = """;LAYER_CHANGE
 G1 X1 Y1
@@ -501,3 +508,122 @@ def test_the_warning_suggests_changing_the_orientation_before_repairing_the_mesh
     assert warning is not None
     assert "Y-up" in warning
     assert warning.index("rotate") < warning.index("repair")
+
+
+# --------------------------------------------------------------------------- filament per feature
+
+
+def feature_filament(tmp_path, text: str) -> dict[str, float]:
+    path = tmp_path / "out.gcode"
+    path.write_text(text)
+    return filament_by_feature(path)
+
+
+def test_filament_is_summed_per_feature_with_relative_extrusion(tmp_path):
+    # Given a print with perimeters and support, using relative extrusion
+    text = "M83\n;TYPE:Perimeter\nG1 X10 Y0 E1.5\nG1 X10 Y10 E1.5\n;TYPE:Support material\nG1 X0 Y10 E2.0\n"
+
+    # When the filament per feature is read
+    totals = feature_filament(tmp_path, text)
+
+    # Then each feature has what was extruded under it
+    assert totals == {"Perimeter": pytest.approx(3.0), "Support material": pytest.approx(2.0)}
+
+
+def test_travel_moves_and_retractions_are_not_extrusion(tmp_path):
+    # Given relative extrusion with a retraction, a travel, and the un-retraction (none of which goes anywhere with E)
+    text = "M83\n;TYPE:Perimeter\nG1 X10 Y0 E1.0\nG1 E-0.8 F2100\nG1 X50 Y50 F9000\nG1 E0.8 F2100\nG1 X60 Y50 E1.0\n"
+
+    # When the filament is read
+    totals = feature_filament(tmp_path, text)
+
+    # Then only the two extruding moves count: 2.0, not 2.8
+    assert totals == {"Perimeter": pytest.approx(2.0)}
+
+
+def test_arcs_are_counted_as_extrusion(tmp_path):
+    # Given a print whose perimeter is an arc (arc fitting writes G2 and G3)
+    text = "M83\n;TYPE:External perimeter\nG2 X10 Y0 I5 J0 E3.0\nG3 X0 Y0 I-5 J0 E3.0\n"
+
+    # When the filament is read
+    totals = feature_filament(tmp_path, text)
+
+    # Then both arcs count
+    assert totals == {"External perimeter": pytest.approx(6.0)}
+
+
+def test_absolute_extrusion_counts_what_the_extruder_advances_and_not_an_unretraction(tmp_path):
+    # Given absolute extrusion: an extrusion, a retraction back, then the same distance forward again, then more
+    text = "M82\nG92 E0\n;TYPE:Perimeter\nG1 X10 Y0 E2.0\nG1 E1.2\nG1 X30 Y0\nG1 E2.0\nG1 X40 Y0 E3.0\n"
+
+    # When the filament is read
+    totals = feature_filament(tmp_path, text)
+
+    # Then 2.0 for the first move and 1.0 for the last: the un-retraction to 2.0 adds nothing
+    assert totals == {"Perimeter": pytest.approx(3.0)}
+
+
+def test_a_reset_of_the_extruder_position_starts_the_count_again(tmp_path):
+    # Given absolute extrusion with the extruder position reset to zero between two layers
+    text = "M82\n;TYPE:Perimeter\nG1 X10 Y0 E5.0\nG92 E0\nG1 X20 Y0 E4.0\n"
+
+    # When the filament is read
+    totals = feature_filament(tmp_path, text)
+
+    # Then both moves count in full: 5.0 and 4.0
+    assert totals == {"Perimeter": pytest.approx(9.0)}
+
+
+def test_what_is_printed_before_the_first_feature_is_left_out(tmp_path):
+    # Given a purge line in the start G-code, before any ;TYPE:
+    text = "M83\nG1 X5 Y0 E9.0\n;TYPE:Perimeter\nG1 X10 Y0 E1.0\n"
+
+    # When the filament is read
+    totals = feature_filament(tmp_path, text)
+
+    # Then only the print itself is counted
+    assert totals == {"Perimeter": pytest.approx(1.0)}
+
+
+def test_a_feature_name_is_kept_whole(tmp_path):
+    # Given support and its interface layers, which have similar names
+    text = "M83\n;TYPE:Support material\nG1 X1 Y0 E1.0\n;TYPE:Support material interface\nG1 X2 Y0 E2.0\n"
+
+    # When the filament is read
+    totals = feature_filament(tmp_path, text)
+
+    # Then they stay separate
+    assert totals == {"Support material": pytest.approx(1.0), "Support material interface": pytest.approx(2.0)}
+
+
+def test_comments_after_a_command_are_ignored(tmp_path):
+    # Given a move that ends with a comment mentioning E
+    text = "M83\n;TYPE:Perimeter\nG1 X10 Y0 E1.0 ; E9 is only a comment\n"
+
+    # When the filament is read
+    totals = feature_filament(tmp_path, text)
+
+    # Then the comment is not read as the extrusion
+    assert totals == {"Perimeter": pytest.approx(1.0)}
+
+
+def test_a_wipe_that_retracts_while_moving_does_not_take_filament_away(tmp_path):
+    # Given a perimeter followed by a wipe: a move that travels and retracts at the same time
+    text = "M83\n;TYPE:Perimeter\nG1 X10 Y0 E2.0\nG1 X12 Y0 E-0.4\nG1 X20 Y0 E2.0\n"
+
+    # When the filament is read
+    totals = feature_filament(tmp_path, text)
+
+    # Then the wipe is not extrusion and does not subtract: 4.0
+    assert totals == {"Perimeter": pytest.approx(4.0)}
+
+
+def test_a_switch_back_to_absolute_extrusion_is_followed(tmp_path):
+    # Given a file that starts in relative mode and switches to absolute extrusion part way
+    text = "M83\n;TYPE:Perimeter\nG1 X10 Y0 E1.0\nM82\nG92 E0\nG1 X20 Y0 E2.0\nG1 X30 Y0 E5.0\n"
+
+    # When the filament is read
+    totals = feature_filament(tmp_path, text)
+
+    # Then after the switch the extruder position is what counts: 1.0, then 2.0 and 3.0 (not 2.0 and 5.0)
+    assert totals == {"Perimeter": pytest.approx(6.0)}
