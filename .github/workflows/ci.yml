@@ -102,6 +102,43 @@ jobs:
         run: .github/scripts/setup-prusaslicer-macos.sh "$PRUSASLICER_VERSION" "$RUNNER_TEMP/prusaslicer"
       - run: uv run poe test-integration
 
+  # Windows is not an afterthought: the code has Windows-specific paths (install folders, the console build) that
+  # only a Windows machine can prove. Unit tests run on the supported floor; the real PrusaSlicer is the portable zip.
+  unit-windows:
+    name: unit tests (windows, python 3.12)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync
+      # Not `poe test`: its quoting of the marker expression is written for a POSIX shell.
+      - run: uv run pytest -m "not integration"
+
+  integration-windows:
+    name: integration tests (PrusaSlicer on Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync
+      - name: Cache the PrusaSlicer download
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}\prusaslicer\PrusaSlicer-${{ env.PRUSASLICER_VERSION }}.zip
+          key: prusaslicer-zip-${{ env.PRUSASLICER_VERSION }}
+      - name: Unpack PrusaSlicer and make a throwaway data directory
+        run: .github/scripts/setup-prusaslicer-windows.ps1 -Version $env:PRUSASLICER_VERSION -WorkDir "$env:RUNNER_TEMP\prusaslicer"
+      - run: uv run pytest -m integration
+
   # The published metadata promises that every dependency's lower bound works. Prove it: resolve each direct
   # dependency to its lowest allowed version and run the unit tests (this is how `mcp>=1.2` was found to be wrong).
   lowest:
@@ -166,7 +203,7 @@ jobs:
   ci:
     name: ci
     if: always()
-    needs: [lint, typecheck, audit, unit, lowest, integration, package, commitlint]
+    needs: [lint, typecheck, audit, unit, unit-windows, lowest, integration, integration-windows, package, commitlint]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
