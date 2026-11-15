@@ -8,6 +8,17 @@ from prusaslicer_mcp import cli, server
 from prusaslicer_mcp.config import Config, PrusaSlicerNotFound, find_executable
 
 
+@pytest.fixture
+def set_home(monkeypatch):
+    """Make `~` (expanduser, Path.home) mean a folder of the test's choosing, on POSIX and on Windows."""
+
+    def apply(folder) -> None:
+        monkeypatch.setenv("HOME", str(folder))  # POSIX
+        monkeypatch.setenv("USERPROFILE", str(folder))  # Windows reads this one and ignores HOME
+
+    return apply
+
+
 def pytest_collection_modifyitems(items):
     """Mark every test that needs a real PrusaSlicer as `integration`, so CI can run the two kinds separately."""
     for item in items:

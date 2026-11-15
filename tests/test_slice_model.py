@@ -206,10 +206,10 @@ async def test_explicit_output_path_is_used_and_its_last_folder_is_created(fake_
     assert target.is_file()
 
 
-async def test_tilde_in_output_path_is_expanded(fake_prusaslicer, model, monkeypatch):
+async def test_tilde_in_output_path_is_expanded(fake_prusaslicer, model, set_home):
     # Given an output path written relative to a home directory that exists
     (fake_prusaslicer.tmp / "home").mkdir()
-    monkeypatch.setenv("HOME", str(fake_prusaslicer.tmp / "home"))
+    set_home(fake_prusaslicer.tmp / "home")
 
     # When the model is sliced
     result = await slice_it(model, output_path="~/gcode/result.gcode")
