@@ -118,7 +118,11 @@ Read in `config.py`; documented in `.env.example` and the README ([ADR 0006](../
 | `PRUSASLICER_MCP_OUTPUT_DIR` | Default G-code location, created in full if missing (it is the user's own setting) | `./output` (relative to the server's cwd, resolved at startup) |
 | `PRUSASLICER_MCP_TIMEOUT` | Per-call timeout (s) for slicing, a positive number; queries use 60 s | `600` |
 
-Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `PrusaSlicer`, `prusa-slicer-console`) → platform install globs (macOS `/Applications/**/PrusaSlicer.app`, Windows `Program Files`).
+Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `PrusaSlicer`, `prusa-slicer-console`) → platform install globs (macOS `/Applications/**/PrusaSlicer.app`; Windows `%ProgramFiles%`, `%ProgramW6432%` and `%ProgramFiles(x86)%` under `Prusa3D\PrusaSlicer*` or `PrusaSlicer*`, and `%LOCALAPPDATA%\Programs\PrusaSlicer*`, read from the environment and never assumed to be on `C:`).
+
+On Windows PrusaSlicer ships two programs: `prusa-slicer.exe` (the GUI build) writes nothing to stdout, so warnings and error text would be lost, and `prusa-slicer-console.exe` is the one a tool can use. Whichever way the executable was found, a `prusa-slicer.exe` with a `prusa-slicer-console.exe` beside it is replaced by the console build; without one, what the user chose is used as it is.
+
+Text files PrusaSlicer writes (the `--query-*` JSON) are read as UTF-8, because Python's default on Windows is a code page. The install locations above and the `%APPDATA%\PrusaSlicer` data folder are known from Prusa's installer but have not been checked on a Windows machine yet (see the roadmap).
 
 ### Client registration
 
