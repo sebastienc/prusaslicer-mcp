@@ -38,6 +38,7 @@ dev = [
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+pythonpath = ["scripts"]
 addopts = "--strict-markers"
 markers = [
     "integration: needs a real PrusaSlicer install; added automatically to any test that uses the `prusaslicer` fixture",
@@ -69,9 +70,13 @@ ignore = [
 # Two checkers on purpose: `ty` (what `uv check` runs) is pre-1.0 and has missed real errors, pyright is mature
 # (ADR 0010). The interpreter is the one `uv run` puts first on PATH, so no venv is configured here.
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
+extraPaths = ["scripts"]  # the dogfood package lives there and is imported as `dogfood`
+
+[tool.ty.environment]
+extra-paths = ["scripts"]  # same, for `uv check`
 
 # Task runner: `uv run poe <task>`. uv has no task runner, so Poe only chains uv's own commands and the tools
 # CI also runs; CI calls these same tasks so local and CI checks cannot drift apart.
@@ -90,3 +95,4 @@ test-all = { cmd = "pytest", help = "Every test (integration tests skip when Pru
 cov = { cmd = "pytest -m 'not integration' --cov", help = "Unit tests with a coverage report" }
 check = { sequence = ["lint", "format-check", "typecheck", "test"], help = "Everything CI checks, apart from integration tests" }
 fix = { sequence = ["lint-fix", "format"], help = "Apply safe lint fixes, then format" }
+dogfood = { cmd = "python -m dogfood.sweep", env = { PYTHONPATH = "scripts" }, help = "Run every tool over a folder of models: `poe dogfood run <folder>` (docs/dogfooding.md)" }
