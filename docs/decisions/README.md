@@ -20,3 +20,4 @@ ADRs are append-only history: to change a decision, write a new ADR and mark the
 | [0011](0011-render-previews-with-numpy-and-pillow.md) | Render previews ourselves with numpy and Pillow | accepted |
 | [0012](0012-transform-with-prusaslicers-own-flags.md) | Transform models with PrusaSlicer's own flags, and do not expose --merge | accepted |
 | [0013](0013-centre-plain-3mf-files-automatically.md) | Centre plain 3MF files on the bed automatically | accepted |
+| [0014](0014-cap-flat-holes-on-request.md) | Cap flat holes in a mesh on request | accepted |
