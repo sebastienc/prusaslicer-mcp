@@ -1,11 +1,12 @@
 """Draw sliced G-code with numpy and Pillow: one layer's toolpaths, or a side silhouette of everything printed.
 
-Reads the text G-code PrusaSlicer writes: the extruding `G1` moves, and the `;LAYER_CHANGE`, `;Z:` and `;TYPE:`
-comments that say which layer and feature each move belongs to (ADR 0011).
+Reads the text G-code PrusaSlicer writes: the extruding `G1` moves and arcs (`G2`/`G3`, which arc fitting writes), and
+the `;LAYER_CHANGE`, `;Z:` and `;TYPE:` comments that say which layer and feature each move belongs to (ADR 0011).
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -40,6 +41,7 @@ FEATURE_COLORS = {
 
 _GRID_MM = 10
 _LINE_MM = 0.45  # a typical extrusion width, so lines look as thick as the plastic is
+_ARC_TOLERANCE_MM = 0.02  # how far a drawn arc may sit from the true one; far below a pixel at any zoom we draw
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,31 @@ class GcodeScan:
     x_range: tuple[float, float]
     y_range: tuple[float, float]
     arcs_skipped: int
+
+
+def _arc_points(
+    x: float, y: float, nx: float, ny: float, i: float, j: float, clockwise: bool
+) -> list[tuple[float, float]]:
+    """The points along an arc from (x, y) to (nx, ny) around the centre (x + i, y + j), the end point last and exact.
+
+    An arc that ends where it starts is a full circle, as G-code defines it.
+    """
+    cx, cy = x + i, y + j
+    radius = math.hypot(i, j)
+    start = math.atan2(y - cy, x - cx)
+    sweep = math.atan2(ny - cy, nx - cx) - start
+    if clockwise and sweep >= 0:
+        sweep -= 2 * math.pi
+    elif not clockwise and sweep <= 0:
+        sweep += 2 * math.pi
+    # A chord of this angle sags from its arc by the tolerance; a tiny radius is a single straight piece.
+    step = 2 * math.acos(max(0.0, 1 - _ARC_TOLERANCE_MM / radius)) if radius > _ARC_TOLERANCE_MM else math.pi
+    pieces = max(1, math.ceil(abs(sweep) / max(step, 1e-3)))
+    points = [
+        (cx + radius * math.cos(start + sweep * k / pieces), cy + radius * math.sin(start + sweep * k / pieces))
+        for k in range(1, pieces)
+    ]
+    return [*points, (nx, ny)]
 
 
 @dataclass
@@ -105,6 +132,7 @@ class _Reader:
                             last_e = float(token[1:])
                 elif command in ("G0", "G1", "G2", "G3"):
                     nx, ny, e = x, y, None
+                    centre: dict[str, float] = {}
                     moved = False
                     for token in code[1:]:
                         letter = token[0]
@@ -114,14 +142,24 @@ class _Reader:
                             ny, moved = float(token[1:]), True
                         elif letter == "E":
                             e = float(token[1:])
+                        elif letter in "IJ":
+                            centre[letter] = float(token[1:])
                     extruding = False
                     if e is not None:
                         extruding = e > 0 if relative else e > last_e + 1e-9
                         if not relative:
                             last_e = e
                     if extruding and moved and layer >= 0:
-                        if command in ("G2", "G3"):
-                            self.arcs_skipped += 1
+                        if command in ("G2", "G3") and not centre:
+                            self.arcs_skipped += 1  # the radius form (R) names no centre, so there is nothing to draw
+                        elif command in ("G2", "G3"):
+                            # An omitted I or J is 0, as in any G-code.
+                            ends = _arc_points(
+                                x, y, nx, ny, centre.get("I", 0.0), centre.get("J", 0.0), command == "G2"
+                            )
+                            for ex, ey in ends:
+                                yield Extrusion(x, y, ex, ey, z, layer, feature)
+                                x, y = ex, ey
                         else:
                             yield Extrusion(x, y, nx, ny, z, layer, feature)
                     x, y = nx, ny

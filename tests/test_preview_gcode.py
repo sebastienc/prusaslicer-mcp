@@ -1,5 +1,7 @@
 """Unit tests for reading toolpaths from G-code and drawing them (synthetic G-code; no PrusaSlicer needed)."""
 
+from itertools import pairwise
+
 import numpy as np
 import pytest
 from gcode_builders import layer, square
@@ -97,15 +99,152 @@ def test_absolute_extrusion_counts_a_move_when_the_extruder_advances(write):
     assert [(m.x0, m.x1) for m in moves] == [(0, 10), (10, 20), (40, 50)]
 
 
-def test_arc_moves_are_counted_but_not_drawn(write):
-    # Given a layer with a straight extrusion and an extruding arc (printer profiles may enable arc fitting)
-    text = "M83\n;LAYER_CHANGE\n;Z:0.2\n;TYPE:Perimeter\nG1 X0 Y0 F9000\nG1 X10 Y0 E0.5\nG2 X20 Y10 I10 J0 E0.8\n"
+ARC_HEAD = "M83\n;LAYER_CHANGE\n;Z:0.2\n;TYPE:Perimeter\n"
+
+
+def points_of(moves):
+    """Every end point of a run of moves, the first move's start included; the moves must join up end to end."""
+    for before, after in pairwise(moves):
+        assert (after.x0, after.y0) == (before.x1, before.y1)
+    return [(moves[0].x0, moves[0].y0), *[(m.x1, m.y1) for m in moves]]
+
+
+def longest_piece(points):
+    return max(np.hypot(x1 - x0, y1 - y0) for (x0, y0), (x1, y1) in pairwise(points))
+
+
+def length_of(points):
+    return sum(np.hypot(x1 - x0, y1 - y0) for (x0, y0), (x1, y1) in pairwise(points))
+
+
+@pytest.mark.parametrize(
+    ("arc", "start"),
+    [
+        pytest.param("G3 X0 Y10 I-10 J0 E1.5", "G1 X10 Y0 F9000", id="counter-clockwise from the right to the top"),
+        pytest.param("G2 X10 Y0 I0 J-10 E1.5", "G1 X0 Y10 F9000", id="clockwise from the top to the right"),
+    ],
+)
+def test_an_arc_is_drawn_as_the_short_way_round_a_quarter_circle(write, arc, start):
+    # Given a quarter circle of radius 10 around the origin, printed as one arc move
+    text = ARC_HEAD + f"{start}\n{arc}\n"
+
+    # When the extruding moves are read
+    points = points_of(list(iter_extrusions(write(text))))
+
+    # Then the path runs between the arc's end points through the middle of the quarter, never off the circle
+    assert points[0] == pytest.approx((10, 0) if "G3" in arc else (0, 10))
+    assert points[-1] == pytest.approx((0, 10) if "G3" in arc else (10, 0))
+    assert len(points) > 4
+    assert all(np.hypot(x, y) == pytest.approx(10, abs=0.01) for x, y in points)
+    assert any(np.hypot(x - 7.07, y - 7.07) < 1 for x, y in points)  # the pieces are about 1.8 mm long
+    assert all(x > -0.01 and y > -0.01 for x, y in points)
+    assert longest_piece(points) < 1.5  # a coarse arc would show as a polygon
+    assert length_of(points) == pytest.approx(10 * np.pi / 2, abs=0.1)  # a quarter of the circumference, not a lap more
+
+
+@pytest.mark.parametrize(
+    ("start", "arc", "opposite"),
+    [
+        pytest.param(
+            "G1 X10 Y0 F9000", "G2 X0 Y10 I-10 J0 E4.5", (-7.07, -7.07), id="clockwise from the right to the top"
+        ),
+        pytest.param(
+            "G1 X0 Y10 F9000",
+            "G3 X10 Y0 I0 J-10 E4.5",
+            (-7.07, -7.07),
+            id="counter-clockwise from the top to the right",
+        ),
+    ],
+)
+def test_an_arc_goes_the_long_way_round_when_its_direction_says_so(write, start, arc, opposite):
+    # Given the same quarter-circle end points as before, but travelled in the other direction (three quarters)
+    text = ARC_HEAD + f"{start}\n{arc}\n"
+
+    # When the extruding moves are read
+    points = points_of(list(iter_extrusions(write(text))))
+
+    # Then the path swings round the far side of the circle instead of cutting across the short way
+    assert any(np.hypot(x - opposite[0], y - opposite[1]) < 1 for x, y in points)
+    assert any(x < -9 for x, _ in points)
+    assert length_of(points) == pytest.approx(10 * np.pi * 1.5, abs=0.3)  # three quarters of the circumference
+    assert all(np.hypot(x, y) == pytest.approx(10, abs=0.01) for x, y in points)
+
+
+@pytest.mark.parametrize(
+    ("start", "arc", "passes_through"),
+    [
+        pytest.param("G1 X10 Y0 F9000", "G3 X-10 Y0 I-10 E3.0", (0, 10), id="J left out"),
+        pytest.param("G1 X0 Y10 F9000", "G2 X0 Y-10 J-10 E3.0", (10, 0), id="I left out"),
+    ],
+)
+def test_a_centre_offset_that_is_left_out_is_zero(write, start, arc, passes_through):
+    # Given a half circle of radius 10 around the origin whose arc names only one of I and J
+    text = ARC_HEAD + f"{start}\n{arc}\n"
+
+    # When the extruding moves are read
+    points = points_of(list(iter_extrusions(write(text))))
+
+    # Then the missing offset counts as 0: the path stays on the circle and passes through the expected side
+    assert all(np.hypot(x, y) == pytest.approx(10, abs=0.01) for x, y in points)
+    assert any(np.hypot(x - passes_through[0], y - passes_through[1]) < 1 for x, y in points)
+
+
+@pytest.mark.parametrize("command", ["G2", "G3"])
+def test_an_arc_that_ends_where_it_starts_is_a_full_circle(write, command):
+    # Given a circle of radius 5 around (20, 20), printed as one arc from its rightmost point back to itself
+    text = ARC_HEAD + f"G1 X25 Y20 F9000\n{command} X25 Y20 I-5 J0 E3.0\n"
 
     # When the file is scanned
     scan = scan_gcode(write(text))
 
-    # Then the arc is reported as skipped
+    # Then the printed extent covers the whole circle, not nothing
+    assert scan.x_range == pytest.approx((15, 25), abs=0.01)
+    assert scan.y_range == pytest.approx((15, 25), abs=0.01)
+    assert scan.arcs_skipped == 0
+
+
+def test_an_arc_keeps_its_layer_and_feature(write):
+    # Given an arc printed as an external perimeter on the second layer
+    text = (
+        ARC_HEAD
+        + "G1 X0 Y0 F9000\nG1 X10 Y0 E0.5\n"
+        + ";LAYER_CHANGE\n;Z:0.4\n;TYPE:External perimeter\nG1 X10 Y0 F9000\nG3 X0 Y10 I-10 J0 E1.5\n"
+    )
+
+    # When the extruding moves are read
+    moves = list(iter_extrusions(write(text)))
+
+    # Then every piece of the arc belongs to that layer and feature, and the move after it starts at the arc's end
+    arc = moves[1:]
+    assert {(m.layer, m.z, m.feature) for m in arc} == {(1, 0.4, "External perimeter")}
+    assert (arc[-1].x1, arc[-1].y1) == (0, 10)
+
+
+def test_a_layer_printed_as_arcs_is_drawn(write):
+    # Given a layer whose perimeter is two half circles of radius 15 (arc fitting), and nothing else
+    text = (
+        "M83\n;LAYER_CHANGE\n;Z:0.2\n;TYPE:External perimeter\nG1 X65 Y50 F9000\n"
+        "G3 X35 Y50 I-15 J0 E5.0\nG3 X65 Y50 I15 J0 E5.0\n"
+    )
+    path = write(text)
+
+    # When the layer is drawn
+    image = render_layer(path, scan_gcode(path), 1, SIZE)
+
+    # Then the perimeter is on the picture instead of a blank layer
+    assert has_colour(image, FEATURE_COLORS["External perimeter"])
+
+
+def test_an_arc_given_by_radius_is_counted_but_not_drawn(write):
+    # Given an extruding arc written in the radius form (R), which does not say where its centre is
+    text = ARC_HEAD + "G1 X0 Y0 F9000\nG1 X10 Y0 E0.5\nG2 X20 Y10 R10 E0.8\n"
+
+    # When the file is scanned
+    scan = scan_gcode(write(text))
+
+    # Then it is reported as skipped, and the straight move before it is still there
     assert scan.arcs_skipped == 1
+    assert scan.x_range == (0, 10)
 
 
 # --------------------------------------------------------------------------- scanning a whole file
