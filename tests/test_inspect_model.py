@@ -264,7 +264,7 @@ async def test_a_model_path_may_start_with_a_tilde(tmp_path, monkeypatch):
     assert info.triangles == 12
 
 
-@pytest.mark.parametrize("suffix", [".stl", ".3mf", ".obj", ".step", ".stp", ".amf"])
+@pytest.mark.parametrize("suffix", [".stl", ".3mf", ".obj", ".amf"])  # STEP is read by PrusaSlicer: test_step.py
 @pytest.mark.parametrize("content", [b"", b"this is not a mesh"], ids=["empty", "garbage"])
 async def test_an_unreadable_model_of_any_supported_type_fails_readably(tmp_path, suffix, content):
     # Given a file with a supported extension whose content is empty or garbage

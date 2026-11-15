@@ -38,6 +38,7 @@ mcp = MCPServer(
 _READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 
 _MODEL_SUFFIXES = {".stl", ".3mf", ".obj", ".amf", ".step", ".stp"}
+_STEP_SUFFIXES = {".step", ".stp"}
 _GCODE_SUFFIXES = {".gcode", ".gco"}
 _OVERRIDE_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 # Flags the server sets itself, plus `save`, which would write into the user's PrusaSlicer data directory.
@@ -105,7 +106,7 @@ async def _outside_volume_hint(model: Path, printer_profile: str | None, centred
     centre_hint = " (hint: retry with center=true to place the model in the middle of the bed)"
     if printer_profile is not None:
         try:
-            x, y, z = (float(v) for v in _load_mesh(model).extents)
+            x, y, z = (float(v) for v in (await _load_model_mesh(model)).extents)
             width, depth, height = await _bed_size(printer_profile)
         except ToolError:
             return "" if centred else centre_hint  # sizes unknown: the position is the likeliest cause
@@ -168,8 +169,30 @@ def _load_mesh(path: Path) -> trimesh.Trimesh:
     return mesh
 
 
-def _close_holes_of(path: Path) -> repair.Closing:
-    return repair.close_holes(_load_mesh(path))
+async def _export_mesh(source: Path, flags: list[str]) -> trimesh.Trimesh:
+    """Have PrusaSlicer write `source` as an STL, with transform `flags` applied, and load the result.
+
+    This is how a STEP file becomes a mesh (trimesh cannot read it), and how a preview shows exactly what
+    PrusaSlicer's own transforms do (ADR 0015, 0016). The STL lives in a temporary folder.
+    """
+    cfg = get_config()
+    with tempfile.TemporaryDirectory(prefix="prusaslicer-mcp-") as folder:
+        target = Path(folder) / f"{source.stem}.stl"
+        result = await _run(cfg, ["--export-stl", *flags, "--output", str(target), str(source)])
+        if result.returncode != 0 or not target.is_file():
+            detail = (result.stderr.strip() or result.stdout.strip() or "no message")[-1000:]
+            raise ToolError(
+                f"PrusaSlicer could not convert {source.name} to a mesh (is it a valid STEP file, or a model PrusaSlicer "
+                f"can read?): {detail}"
+            )
+        return await asyncio.to_thread(_load_mesh, target)
+
+
+async def _load_model_mesh(path: Path) -> trimesh.Trimesh:
+    """The model as one mesh, converting STEP through PrusaSlicer. Loading runs off the event loop."""
+    if path.suffix.lower() in _STEP_SUFFIXES:
+        return await _export_mesh(path, [])
+    return await asyncio.to_thread(_load_mesh, path)
 
 
 def _closing_warning(closing: repair.Closing) -> str:
@@ -405,7 +428,7 @@ async def inspect_model(
     """Check a model before slicing: size, volume, watertightness, number of separate parts,
     and (optionally) whether it fits a given build volume."""
     path = _model_path(model_path)
-    mesh = _load_mesh(path)
+    mesh = await _load_model_mesh(path)
 
     size = tuple(float(x) for x in mesh.extents)
     warnings: list[str] = []
@@ -492,7 +515,7 @@ async def preview_model(
     Returns a PNG and a caption with its size. PrusaSlicer prints with z up too, so a model that looks to be
     lying on its side will be printed that way (scans are often Y-up)."""
     path = _model_path(model_path)
-    mesh = _load_mesh(path)
+    mesh = await _load_model_mesh(path)
     try:
         picture = render_model(mesh, view, size)
     except ValueError as e:
@@ -705,7 +728,7 @@ async def slice_model(
                 "settings. Repair the mesh in PrusaSlicer, or slice the model as a plain STL with profiles."
             )
         # A large scan takes seconds to load and cap, so keep that off the event loop.
-        closing = await asyncio.to_thread(_close_holes_of, model)
+        closing = await asyncio.to_thread(repair.close_holes, await _load_model_mesh(model))
 
     args = ["--export-gcode", "--binary-gcode=0"]
     if profiles is not None:

@@ -1,6 +1,11 @@
-import pytest
+from pathlib import Path
+from types import SimpleNamespace
 
-from prusaslicer_mcp.config import PrusaSlicerNotFound, find_executable
+import pytest
+import trimesh
+
+from prusaslicer_mcp import cli, server
+from prusaslicer_mcp.config import Config, PrusaSlicerNotFound, find_executable
 
 
 def pytest_collection_modifyitems(items):
@@ -83,3 +88,33 @@ def make_3mf(tmp_path):
         return path
 
     return make
+
+
+@pytest.fixture
+def fake_export(tmp_path, monkeypatch):
+    """A fake PrusaSlicer that answers `--export-stl` by writing `.mesh` to the --output path.
+
+    `.state` chooses what it does and says; `.calls` records every command line and `.inputs` the model file as it
+    was given (a scratch copy is gone by the time a test looks).
+    """
+    monkeypatch.setattr(
+        server,
+        "_config",
+        Config(executable=tmp_path / "PrusaSlicer", datadir=None, output_dir=tmp_path / "out", timeout=5),
+    )
+    calls: list[list[str]] = []
+    inputs: list[bytes | None] = []
+    state = SimpleNamespace(
+        mesh=trimesh.creation.box(extents=(20, 30, 40)), writes_output=True, returncode=0, stdout="", stderr=""
+    )
+
+    async def fake_run(config, args, timeout=None):
+        calls.append(args)
+        given = Path(args[-1])
+        inputs.append(given.read_bytes() if given.is_file() else None)
+        if state.writes_output:
+            state.mesh.export(Path(args[args.index("--output") + 1]))
+        return cli.CliResult(state.returncode, state.stdout, state.stderr)
+
+    monkeypatch.setattr(cli, "run", fake_run)
+    return SimpleNamespace(calls=calls, inputs=inputs, state=state, tmp=tmp_path)
