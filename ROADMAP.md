@@ -6,49 +6,62 @@ When an item ships, move it to **Done** and update the README and architecture d
 
 ## Done
 
-- Wrap the PrusaSlicer 2.9.x CLI: `list_printers`, `list_profiles`, `inspect_model`, `slice_model` (v0.1.0)
-- Text G-code statistics: time, filament length/volume/weight, cost, layers
-- Tool failures reach the model as readable `ToolError`s with PrusaSlicer's own message (SDK 2.x hides any other exception)
-- `slice_model` centres plain 3MF files on the bed by default (13 of 15 in the library were stored off it), reports `centered`, and keeps `center` as an override ([ADR 0013](docs/decisions/0013-centre-plain-3mf-files-automatically.md))
-- A refused slice says how to fix it: a model bigger than the bed (sizes, `scale_to_fit`, `rotate_z=45` when it fits across the diagonal), an empty first layer, and the wipe-tower conflict; the remedies were verified on the real models that triggered them
-- Project scaffolding: uv, direnv/`.env`, tests, Claude rules, MADR decisions, architecture doc, VS Code workspace
-- TDD as the default workflow, and Given/When/Then as the test style, both written down in `.claude/rules/testing.md`; every existing test migrated to that shape
-- PrusaSlicer projects keep their own settings: profiles are optional for a saved project, `inspect_model` reports what it stores, and the result says which settings applied ([ADR 0007](docs/decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md))
-- G-code statistics add up every extruder's filament length and volume (multi-material footers list one value per extruder)
-- Releases: the `ci-required-main` ruleset is active and requires the single `ci` check, Release Please has cut `v0.1.1`, and only `feat`, `fix`, `perf` and `revert` commits can trigger a release
-- `slice_model` returns PrusaSlicer's whole multi-line warnings, and warns when a slice prints nothing over part of the model's height (found slicing a Y-up scan that lay on its side)
-- `slice_model` refuses overrides the server controls itself (`binary_gcode=1` used to beat the forced text G-code, `save` could write into the user's data directory), validates everything before touching the disk, and lets a caller-supplied `output_path` create only its last folder, so a typo fails instead of building a stray folder tree
-- Type checking runs `ty` pinned to a fixed version plus pyright ([ADR 0010](docs/decisions/0010-pin-ty-and-add-pyright.md))
-- `preview_model` and `preview_gcode` return PNGs so Claude can see a model (iso, front, side, top or a four-view sheet) and what was sliced (one layer's toolpaths, or front and side silhouettes of everything printed), drawn with numpy and Pillow ([ADR 0011](docs/decisions/0011-render-previews-with-numpy-and-pillow.md))
-- `slice_model` transforms with PrusaSlicer's own flags: `rotate_x/y/z`, `scale`, `scale_to_fit`, `split` and `copies`, also on projects ([ADR 0012](docs/decisions/0012-transform-with-prusaslicers-own-flags.md))
-- A refused slice is never reported as a success: PrusaSlicer exits 0 for some refusals, so an old file at the output path used to be returned with its statistics; slices now go to a scratch folder and move into place only on success (found by slicing every model in the library)
-- Quality gates ([ADR 0009](docs/decisions/0009-quality-gate-toolchain.md)): `uv run poe check` (Ruff lint, `uv format`, `uv check`, unit tests), `uv audit`, an automated stdio protocol test, and CI with lint, types, audit, unit tests on Python 3.12 and 3.14, integration tests on macOS (PrusaSlicer download cached by version) and commitlint
-- Conventional Commits and Release Please release pull requests ([ADR 0008](docs/decisions/0008-conventional-commits-and-release-please.md))
-- Test gaps filled and mutation-checked: coverage 84% to 99% (line+branch), only `main()` uncovered (an automated stdio test is in Quality gates). The new tests exposed and fixed six problems: an opaque crash on an invalid `PRUSASLICER_MCP_TIMEOUT`, an opaque crash on a corrupt 3MF/STEP/AMF, overrides that could undo server guarantees (`binary_gcode=1`, `save`), folders created for refused requests, a made-up `0` seconds for an unrecognised print time, and a whole G-code file read into memory to check four bytes
+### Tools
+
+- The core tools `list_printers`, `list_profiles`, `inspect_model` and `slice_model`, wrapping the PrusaSlicer 2.9.x command line ([ADR 0002](docs/decisions/0002-wrap-the-prusaslicer-2-9-cli.md)), with G-code statistics: time, filament length, volume and weight summed across extruders, cost and layers.
+- PrusaSlicer projects keep their own saved settings: profiles are optional for a saved project, `inspect_model` reports what it stores, and the result says which settings applied ([ADR 0007](docs/decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md)).
+- Transforms with PrusaSlicer's own flags: `rotate_x/y/z`, `scale`, `scale_to_fit`, `split` and `copies`, also on projects ([ADR 0012](docs/decisions/0012-transform-with-prusaslicers-own-flags.md)).
+- Plain 3MF files are centred on the bed by default, with `center` as an override and `centered` in the result ([ADR 0013](docs/decisions/0013-centre-plain-3mf-files-automatically.md)).
+- `preview_model` and `preview_gcode` return PNGs so Claude can see a model and what was sliced, drawn with numpy and Pillow ([ADR 0011](docs/decisions/0011-render-previews-with-numpy-and-pillow.md)).
+
+### Correctness and clear errors
+
+- Failures reach the model as readable `ToolError`s with PrusaSlicer's own message (SDK 2.x hides any other exception).
+- A refused slice says how to fix it: a model bigger than the bed, an empty first layer, and the wipe-tower conflict. The remedies were verified on the real models that triggered them.
+- A refused slice is never reported as a success. PrusaSlicer exits 0 for some refusals, so slices go to a scratch folder and move into place only on success.
+- PrusaSlicer's whole multi-line warnings are returned, and a slice that prints nothing over part of the model's height is flagged.
+- Overrides the server controls itself (`binary_gcode`, `save`, ...) are refused, everything is validated before the disk is touched, and `output_path` may create only its last folder.
+
+### Process
+
+- TDD as the default workflow and Given/When/Then as the test style (`.claude/rules/testing.md`). Coverage is 99% (line and branch), and the code and tests are mutation-checked.
+- Quality gates ([ADR 0009](docs/decisions/0009-quality-gate-toolchain.md), [ADR 0010](docs/decisions/0010-pin-ty-and-add-pyright.md)): `uv run poe check` (Ruff, `uv format`, `ty` pinned plus pyright, unit tests), `uv audit`, an automated stdio protocol test, and CI with lint, types, audit, unit tests on Python 3.12 and 3.14, integration tests on macOS (PrusaSlicer download cached by version) and commitlint.
+- Conventional Commits and Release Please release pull requests ([ADR 0008](docs/decisions/0008-conventional-commits-and-release-please.md)). The `ci-required-main` ruleset requires the single `ci` check, and only `feat`, `fix`, `perf` and `revert` commits can trigger a release.
+- An opt-in dogfood sweep, `uv run poe dogfood run <folder>`, that runs every tool over a folder of real models and reports crashes, timeouts, refusals, warnings and suspicious results ([docs/dogfooding.md](docs/dogfooding.md)). Its first run over 132 models found and fixed four problems.
+- Project scaffolding: uv, direnv and `.env`, Claude rules, MADR decisions, the architecture doc, a VS Code workspace.
 
 ## Next
 
-1. **Dogfood.** Use the server on real models (it is registered for this repo through the committed `.mcp.json`), note friction and fix it. Real models have so far exposed four problems, all fixed: a project's saved settings were ignored, warnings were cut to one line, a Y-up scan lying on its side sliced "successfully" with healthy-looking numbers, and a mistyped `output_path` built a stray folder tree. Still untried: a multi-material project that really uses several extruders, very large files, SLA, and STEP.
+Nothing is queued. Pick from **Later**. After a change to slicing, previewing, inspection or G-code parsing, run the dogfood sweep.
 
 ## Later
 
+### Found by dogfooding
+
 - **Multi-model plates.** `--merge` segfaults in PrusaSlicer 2.9.7, so a plate of several files needs our own plate builder (trimesh) or a fixed PrusaSlicer. `copies` and `split` cover several copies of one model and several parts in one file. See ADR 0012.
-- **Preview with transforms:** let `preview_model` show a model after `rotate_*` and `scale`, so an orientation can be checked before slicing.
-- **Close open meshes before slicing.** A scan can lack a face entirely: the statue's base has no bottom (687 open edges), so stood head-up PrusaSlicer refuses it (`object with no extrusions in the first layer`) and head-down it slices but upside down. Cap the hole, or say clearly that the mesh needs repair.
-- **Preview improvements:** stack the two silhouette panels for wide, low prints so they use the whole picture, draw `G2`/`G3` arcs, and add a perspective or shaded layer-stack view. Speed up the G-code parse for very large files.
+- **Close open meshes before slicing.** A scan can lack a face entirely: one scan's base has no bottom (687 open edges), so stood head-up PrusaSlicer refuses it (`object with no extrusions in the first layer`) and head-down it slices but upside down. Cap the hole, or say clearly that the mesh needs repair.
 - **STEP files.** `inspect_model` cannot read STEP at all (trimesh needs `cascadio` or `gmsh`, neither installed), yet `.step`/`.stp` are accepted and PrusaSlicer slices them natively. Either skip the mesh inspection for STEP with a clear message, or add a converter.
-- **Failed slices leave an empty output folder:** it is created before PrusaSlicer runs. Remove it when the slice fails and the server created it.
+- **Preview with transforms.** Let `preview_model` show a model after `rotate_*` and `scale`, so an orientation can be checked before slicing.
+- **Preview improvements.** Stack the two silhouette panels for wide, low prints so they use the whole picture, draw `G2`/`G3` arcs, add a perspective or shaded layer-stack view, and speed up the G-code parse for very large files.
+- **Failed slices leave an empty output folder.** It is created before PrusaSlicer runs. Remove it when the slice fails and the server created it.
 - **Validate overrides earlier.** A bad key or value already fails with PrusaSlicer's own readable message (`Unknown option --fill-densty`, `Invalid value supplied for --fill-density`). What remains is failing before PrusaSlicer starts, and suggesting the closest valid key from `--help-fff`.
-- **Type checkers:** run one again once `ty` reaches 1.0 ([ADR 0010](docs/decisions/0010-pin-ty-and-add-pyright.md)). Related watch item: `uv format` uses the latest Ruff 0.15.x at run time, so pin it with `--version` if formatting ever drifts.
-- **Linux integration tests.** Prusa no longer attaches Linux builds to its GitHub releases; the Flathub package could work, but is untried.
+
+### Ideas
+
 - **Richer G-code analysis:** silent-mode time, first-layer time, time and filament per feature type, per-layer stats.
-- **Effective-settings introspection:** show the resolved value of a setting for a printer/print/filament combination, and explain what an override changed. Must not write into the user's PrusaSlicer data directory.
-- **3MF projects:** read per-object settings and plate layout from 3MF; slice a project as saved in the GUI; possibly write one back.
+- **Effective-settings introspection:** show the resolved value of a setting for a printer, print and filament combination, and explain what an override changed. Must not write into the user's PrusaSlicer data directory.
+- **Project details:** report a project's per-object settings and plate layout, and possibly write a project back. (Slicing a project as saved is done, ADR 0007.)
 - **Multi-material and multi-extruder slicing** (multiple filament profiles, tool changes). Needs a check of how the 2.9.x CLI takes several `--material-profile` values.
 - **SLA (resin) support.** `list_printers` already accepts `SLA`; slicing and statistics differ (layer images, different footer).
 - **Ideas from PrusaMCP** ([ADR 0004](docs/decisions/0004-build-our-own-server.md)): orientation scoring, printability checks (thin walls, bridges, overhangs). Port with attribution; it is MIT.
 - **Binary G-code:** a reader or `convert_gcode` tool so output can match the printer profile again ([ADR 0005](docs/decisions/0005-always-slice-to-text-gcode.md)).
-- **Packaging:** make it installable/runnable with `uvx` for easier client setup.
+- **Packaging:** make it installable and runnable with `uvx` for easier client setup.
+
+### Tooling
+
+- **Type checkers.** Run one again once `ty` reaches 1.0 ([ADR 0010](docs/decisions/0010-pin-ty-and-add-pyright.md)). Related watch item: `uv format` uses the latest Ruff 0.15.x at run time, so pin it with `--version` if formatting ever drifts.
+- **Linux integration tests.** Prusa no longer attaches Linux builds to its GitHub releases; the Flathub package could work, but is untried.
+- **Dogfood sweep in CI.** It needs a small corpus of freely licensed models to run against, since the real library is private.
 
 ## Exploring (needs a decision first)
 
