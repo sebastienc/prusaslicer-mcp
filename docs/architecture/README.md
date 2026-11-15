@@ -167,6 +167,8 @@ installs the official 2.9.7 `.dmg` (cached by version, `PRUSASLICER_VERSION` in 
 throwaway data directory from the profiles inside the app. Linux is not covered because Prusa no longer attaches Linux
 builds to its GitHub releases.
 
+Every `uses:` in the workflows is pinned to a commit SHA with its version in a comment, and the repository requires it; Dependabot (`.github/dependabot.yml`) proposes updates weekly, grouped in one pull request.
+
 ## Releases
 
 Release Please (`.github/workflows/release-please.yml`, [ADR 0008](../decisions/0008-conventional-commits-and-release-please.md)) reads the Conventional Commits on `main` and keeps a release pull request open. Merging it tags `prusaslicer-mcp-vX.Y.Z`, publishes a GitHub release, writes `CHANGELOG.md`, and bumps the version in `pyproject.toml`, `uv.lock` and `.release-please-manifest.json`. In the same workflow run, a `build` job (read-only) builds the sdist and wheel from the tag and a `publish` job uploads them to PyPI with trusted publishing (OpenID Connect, no stored token) inside the `pypi` environment ([ADR 0020](../decisions/0020-open-source-and-publish-to-pypi.md)). Publishing is a job of this workflow, not a separate `on: release` one, because a release made with the default `GITHUB_TOKEN` does not trigger other workflows.
