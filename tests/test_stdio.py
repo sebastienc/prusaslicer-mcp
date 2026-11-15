@@ -15,7 +15,14 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, ImageContent, TextContent
 
-READ_ONLY_TOOLS = {"list_printers", "list_profiles", "inspect_model", "preview_model", "preview_gcode"}
+READ_ONLY_TOOLS = {
+    "list_printers",
+    "list_profiles",
+    "inspect_model",
+    "preview_model",
+    "preview_gcode",
+    "suggest_orientation",
+}
 ALL_TOOLS = READ_ONLY_TOOLS | {"slice_model"}
 
 
@@ -218,3 +225,24 @@ async def test_a_gcode_preview_arrives_as_a_png_image_and_a_caption(tmp_path):
     assert base64.b64decode(image.data)[:8] == b"\x89PNG\r\n\x1a\n"
     assert isinstance(text, TextContent)
     assert "silhouettes" in text.text
+
+
+async def test_suggest_orientation_bounds_how_many_options_a_client_may_ask_for(tools):
+    # Given the tools a client received
+
+    # When the schema of suggest_orientation's count is looked at
+    count = tools["suggest_orientation"].input_schema["properties"]["count"]
+
+    # Then it is a whole number from 1 to 12
+    assert (count["minimum"], count["maximum"]) == (1, 12)
+
+
+async def test_the_rotations_are_described_once_the_same_way_for_slicing_and_previewing(tools):
+    # Given the tools a client received
+
+    # When the rotate_x descriptions of slice_model and preview_model are compared
+    sliced = tools["slice_model"].input_schema["properties"]["rotate_x"]["description"]
+    previewed = tools["preview_model"].input_schema["properties"]["rotate_x"]["description"]
+
+    # Then they are the same text, so the two cannot drift apart
+    assert sliced == previewed

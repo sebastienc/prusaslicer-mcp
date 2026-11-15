@@ -264,6 +264,49 @@ async def test_an_uneven_scan_base_is_closed_flat_so_the_first_layer_has_real_co
     assert first > 0.7 * second
 
 
+def turned_cone_stl(tmp_path, x: float, y: float, z: float):
+    """A flat cone (40 mm across, 10 mm tall, a 48-sided base) exported at an odd angle about fixed X, Y, Z."""
+    mesh = trimesh.creation.cone(radius=20, height=10, sections=48)
+    for axis, degrees in (([1, 0, 0], x), ([0, 1, 0], y), ([0, 0, 1], z)):
+        mesh.apply_transform(trimesh.transformations.rotation_matrix(np.radians(degrees), axis))
+    path = tmp_path / "cone.stl"
+    mesh.export(path)
+    return path
+
+
+def rotation_flags(option):
+    return server._transform_args(option.rotate_x, option.rotate_y, None, None, None, False, None)
+
+
+@pytest.mark.parametrize("angles", [(0, 0, 0), (180, 0, 0), (37, -20, 110), (16, 0, 0), (90, 0, 0), (0, -90, 0)])
+async def test_the_suggested_rotation_stands_the_model_on_its_base_in_prusaslicer(tmp_path, angles):
+    # Given a cone exported at an odd angle, and the best orientation suggested for it
+    model = turned_cone_stl(tmp_path, *angles)
+    best = (await server.suggest_orientation(str(model))).options[0]
+
+    # When PrusaSlicer applies that rotation
+    mesh = await server._export_mesh(model, rotation_flags(best))
+
+    # Then the whole 48-point base is level at the bottom and the cone is 10 mm tall: our matrix is PrusaSlicer's
+    assert (mesh.vertices[:, 2] <= mesh.vertices[:, 2].min() + 0.02).sum() >= 48
+    assert mesh.extents[2] == pytest.approx(10, abs=0.05)
+
+
+async def test_a_tilted_base_is_refused_as_stored_and_prints_a_whole_first_layer_when_levelled(tmp_path, installed):
+    # Given a cone standing on its base but tilted 16 degrees, like a scan whose base is not square to its axis
+    model = turned_cone_stl(tmp_path, 16, 0, 0)
+    best = (await server.suggest_orientation(str(model))).options[0]
+
+    # When it is sliced as stored, and then with the suggested rotation
+    with pytest.raises(ToolError, match="no extrusions in the first layer"):
+        await slice_bar(model, installed)
+    levelled = await slice_bar(model, installed, rotate_x=best.rotate_x, rotate_y=best.rotate_y)
+
+    # Then as stored it rests on an edge and is refused, and levelled the first layer carries as much as the second
+    first, second = filament_per_layer(Path(levelled.gcode_path), 2)
+    assert first > 0.7 * second
+
+
 def recorded_setting(result, key: str) -> str:
     """The value PrusaSlicer wrote for `key` in the config dump at the end of the G-code."""
     for line in reversed(Path(result.gcode_path).read_text().splitlines()):

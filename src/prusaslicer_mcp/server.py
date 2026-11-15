@@ -16,7 +16,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from . import cli, repair
+from . import cli, orientation, repair
 from .config import Config, ConfigError, load_config
 from .gcode import GcodeStats, layer_gap_warning, parse_gcode_stats
 from .preview_gcode import render_layer, render_profile, scan_gcode
@@ -218,9 +218,9 @@ async def _load_model_mesh(path: Path) -> trimesh.Trimesh:
     return await asyncio.to_thread(_load_mesh, path)
 
 
-def _closing_note(closing: repair.Closing, doing: Literal["slicing", "drawing"]) -> str:
+def _closing_note(closing: repair.Closing, doing: Literal["slicing", "drawing", "scoring"]) -> str:
     """What close_holes did, so a result never hides that the mesh used was not the file."""
-    used = "sliced" if doing == "slicing" else "drawn"
+    used = {"slicing": "sliced", "drawing": "drawn", "scoring": "scored"}[doing]
     if closing.closed:
         flat = (
             f" (an uneven rim was extended by up to {closing.extended_mm:.1f} mm so the base is flat)"
@@ -616,6 +616,94 @@ async def preview_model(
         ]
     )
     return [Image(data=to_png(picture), format="png"), caption]
+
+
+class OrientationOption(BaseModel):
+    rank: int
+    rotate_x: float
+    rotate_y: float
+    height_mm: float
+    base_area_mm2: float
+    base_share: float
+    overhang_area_mm2: float
+    overhang_share: float
+    stable: bool
+    as_stored: bool
+
+
+class OrientationAdvice(BaseModel):
+    surface_area_mm2: float
+    options: list[OrientationOption]
+    warnings: list[str]
+
+
+@mcp.tool(annotations=_READ_ONLY)
+async def suggest_orientation(
+    model_path: Annotated[
+        str, Field(description="Absolute path to an STL/3MF/OBJ/STEP file (not a PrusaSlicer project)")
+    ],
+    count: Annotated[int, Field(description="How many of the best orientations to return", ge=1, le=12)] = 5,
+    close_holes: Annotated[
+        bool,
+        Field(
+            description="Cap flat holes first, as slice_model(close_holes=true) would, so a scan's missing base can "
+            "be the face it stands on. Without it an open base never counts as a base."
+        ),
+    ] = False,
+) -> OrientationAdvice:
+    """Suggest which way up to print a model, ranked, with what each orientation costs.
+
+    The candidates are the model's large flat faces, its six axis directions and the orientation as stored (always
+    listed, with its rank). Each is scored by the surface it puts on the bed (`base_area_mm2`, and `stable` unless that
+    is under 5% of the model's silhouette from above), the surface leaning past 45 degrees that would need support
+    (`overhang_area_mm2`) and the height. Pass the `rotate_x` and `rotate_y` of an option to preview_model to look
+    at it and to slice_model to print it. The scores are geometry only: they know nothing about strength, how it looks
+    or the material, so use them to choose, not to decide."""
+    path = _model_path(model_path)
+    if read_project(path) is not None:
+        raise ToolError(
+            "suggest_orientation is for plain models: a PrusaSlicer project keeps its own placement, and rotations "
+            "would not combine with it as these scores assume. Use preview_model on the project to try a rotation."
+        )
+    mesh = await _load_model_mesh(path)
+    warnings: list[str] = []
+    if close_holes:
+        closing = await asyncio.to_thread(repair.close_holes, mesh)
+        mesh = closing.mesh
+        warnings.append(_closing_note(closing, "scoring"))
+    elif not mesh.is_watertight:
+        holes = repair.find_holes(mesh)
+        closable = sum(hole.closable for hole in holes)
+        if closable:
+            warnings.append(
+                f"The model has {closable} open hole(s) that close_holes can cap, such as a missing base. They are "
+                "not counted as a base here: pass close_holes=true to score the model with them capped."
+            )
+    options = await asyncio.to_thread(orientation.suggest, mesh, count)
+    if not any(option.stable for option in options):
+        warnings.append(
+            "No orientation rests on a real base (each stands on a point or an edge), so expect to need a brim or "
+            "supports, or to cut the model flat."
+        )
+    return OrientationAdvice(
+        surface_area_mm2=round(float(mesh.area), 1),
+        options=[
+            OrientationOption(
+                rank=option.rank,
+                rotate_x=round(option.rotate_x, 2),
+                rotate_y=round(option.rotate_y, 2),
+                height_mm=round(option.height_mm, 1),
+                base_area_mm2=round(option.base_area_mm2, 1),
+                base_share=round(option.base_share, 3),
+                overhang_area_mm2=round(option.overhang_area_mm2, 1),
+                overhang_share=round(option.overhang_share, 3),
+                stable=option.stable,
+                as_stored=option.as_stored,
+            )
+            for option in options
+        ],
+        warnings=warnings,
+    )
 
 
 GcodeView = Literal["layer", "profile"]
