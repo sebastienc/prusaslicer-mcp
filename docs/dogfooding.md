@@ -24,12 +24,13 @@ Roughly 15 minutes for 130 models with the default workers. Cloud-synced folders
 
 ## What it does per file
 
-Three steps, each in its **own process with a timeout**, so a model that hangs or crashes the server cannot stop the
+Four steps, each in its **own process with a timeout**, so a model that hangs or crashes the server cannot stop the
 sweep:
 
 1. `inspect_model` against the printer's bed.
 2. `preview_model` as a four-view sheet (saved as `model.png`).
-3. `slice_model`, then `preview_gcode` as the side silhouette (saved as `print.png`). A PrusaSlicer project is sliced
+3. `suggest_orientation` (without `close_holes`). A PrusaSlicer project is skipped, since the tool refuses projects.
+4. `slice_model`, then `preview_gcode` as the side silhouette (saved as `print.png`). A PrusaSlicer project is sliced
    with its own settings (no profiles); anything else with the chosen profiles. The G-code is deleted after use.
 
 Results go to `<out>/results.jsonl`, one row per step, with a numbered folder per file for the pictures.
@@ -46,6 +47,7 @@ the server and the only reason the command exits non-zero. Look at them first.
 | warnings | PrusaSlicer's warnings and the layer-gap warning, grouped with the numbers ignored. A new kind of warning is worth reading in full. |
 | time per step | Median, 90th percentile and maximum seconds. A step far slower than the rest points at a performance problem. |
 | inspect_model findings | How many files are not watertight, have several parts, exceed the bed, are 3MF files stored off the bed, or are projects. |
+| suggest_orientation findings | How many plain models were scored, how many are better stood another way than as stored, how many rest on no real base as stored, and how many have no stable orientation at all. The projects are counted as skipped. |
 | printed height | Files whose printed height is not about the model's height (outside 0.9 to 1.1). That means missing or extra layers, and a silent bad slice. |
 | pictures | The emptiest model sheets and the faintest silhouettes. A blank picture usually means something went wrong; open the file. |
 

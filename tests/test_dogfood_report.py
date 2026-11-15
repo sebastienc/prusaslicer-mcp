@@ -19,6 +19,25 @@ def inspect_row(i, path="a.stl", size=(20, 20, 30), watertight=True, parts=1, fi
     }  # fmt: skip
 
 
+def orientation_row(i, path="a.stl", best_is_stored=True, stored_stable=True, any_stable=True, skipped=None):
+    if skipped:
+        return {
+            "id": i,
+            "path": path,
+            "size_mb": 1.0,
+            "step": "orientation",
+            "ok": True,
+            "seconds": 0.1,
+            "skipped": skipped,
+        }
+    return {
+        "id": i, "path": path, "size_mb": 1.0, "step": "orientation", "ok": True, "seconds": 0.5,
+        "best_is_stored": best_is_stored, "stored_rank": 1 if best_is_stored else 3, "stored_stable": stored_stable,
+        "any_stable": any_stable, "best": {"rotate_x": 0.0, "rotate_y": 0.0, "height_mm": 10.0, "base_share": 0.5,
+                                           "overhang_share": 0.0}, "warnings": [],
+    }  # fmt: skip
+
+
 def slice_row(i, path="a.stl", height=30.0, warnings=(), seconds=3.0, **extra):
     return {
         "id": i, "path": path, "size_mb": 1.0, "step": "slice", "ok": True, "seconds": seconds,
@@ -222,3 +241,50 @@ def test_results_round_trip_through_the_file(tmp_path):
 
     # Then they come back unchanged
     assert loaded == rows
+
+
+def test_orientation_findings_are_counted_and_projects_are_left_out():
+    # Given four files: one best as stored, one whose as-stored orientation is not the best, one that rests on
+    # no real base in any orientation, and a project (which the tool does not score)
+    rows = [
+        orientation_row(0),
+        orientation_row(1, best_is_stored=False, stored_stable=False),
+        orientation_row(2, best_is_stored=False, stored_stable=False, any_stable=False),
+        orientation_row(3, skipped="PrusaSlicer project"),
+    ]
+
+    # When the findings are counted
+    counts = report.orientation_counts(rows)
+
+    # Then each file is counted once under what it shows, and the project is only counted as skipped
+    assert counts == {
+        "scored": 3,
+        "as stored is not the best orientation": 2,
+        "as stored rests on no real base": 2,
+        "no orientation has a real base": 1,
+        "skipped (PrusaSlicer projects)": 1,
+    }
+
+
+def test_the_summary_lists_the_orientation_step_and_its_findings():
+    # Given rows for one scored file
+    rows = [inspect_row(0), orientation_row(0, best_is_stored=False, stored_stable=False), slice_row(0)]
+
+    # When the sweep is summarised
+    text = report.summarize(rows)
+
+    # Then the step has its own line and the findings have a section
+    assert "orientation" in text.split("steps (outcome: count):")[1].split("refused slices")[0]
+    assert "suggest_orientation findings" in text
+    assert "as stored is not the best orientation" in text
+
+
+def test_an_orientation_step_that_failed_is_not_counted_as_scored_and_does_not_break_the_report():
+    # Given one scored file and one whose orientation step crashed
+    rows = [orientation_row(0), failed(1, "orientation", crash="RuntimeError: boom")]
+
+    # When the findings are counted
+    counts = report.orientation_counts(rows)
+
+    # Then only the scored file counts (the crash is reported by the step outcomes, not here)
+    assert counts["scored"] == 1

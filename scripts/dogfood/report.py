@@ -98,6 +98,20 @@ def inspect_counts(rows: list[Row]) -> dict[str, int]:
     return counts
 
 
+def orientation_counts(rows: list[Row]) -> dict[str, int]:
+    """What suggest_orientation found: how many scored files, and how many show a problem as stored."""
+    scored = [row for row in rows if row["step"] == "orientation" and row.get("ok") and "skipped" not in row]
+    return {
+        "scored": len(scored),
+        "as stored is not the best orientation": sum(not row["best_is_stored"] for row in scored),
+        "as stored rests on no real base": sum(not row["stored_stable"] for row in scored),
+        "no orientation has a real base": sum(not row["any_stable"] for row in scored),
+        "skipped (PrusaSlicer projects)": sum(
+            1 for row in rows if row["step"] == "orientation" and row.get("ok") and "skipped" in row
+        ),
+    }
+
+
 def height_mismatches(rows: list[Row]) -> list[tuple[str, float]]:
     """Files whose printed height is not about the model's height: (file, printed / model)."""
     inspected = {row["id"]: row for row in rows if row["step"] == "inspect" and row.get("ok")}
@@ -153,7 +167,7 @@ def summarize(rows: list[Row], out_dir: Path | None = None) -> str:
     )
 
     lines += ["", "steps (outcome: count):"]
-    for step in ("inspect", "preview_model", "slice"):
+    for step in ("inspect", "preview_model", "orientation", "slice"):
         parts = [
             f"{outcome} {counts[(step, outcome)]}"
             for outcome in ("ok", "refused", "timeout", "crash")
@@ -180,6 +194,9 @@ def summarize(rows: list[Row], out_dir: Path | None = None) -> str:
 
     lines += ["", "inspect_model findings:"]
     lines += [f"  {n:4}  {what}" for what, n in inspect_counts(rows).items()]
+
+    lines += ["", "suggest_orientation findings (files scored with close_holes off):"]
+    lines += [f"  {n:4}  {what}" for what, n in orientation_counts(rows).items()]
 
     mismatched = height_mismatches(rows)
     lines += ["", f"printed height far from the model's height ({len(mismatched)}):"]
