@@ -4,6 +4,7 @@ Every test runs on a fake machine: an empty home directory, an empty PATH, and i
 globs that point into tmp_path, so the real install on the developer's machine cannot leak in.
 """
 
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -17,6 +18,10 @@ ENV_VARS = (
     "PRUSASLICER_MCP_OUTPUT_DIR",
     "PRUSASLICER_MCP_TIMEOUT",
     "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramFiles",
+    "ProgramW6432",
+    "ProgramFiles(x86)",
 )
 
 
@@ -34,12 +39,19 @@ def machine(tmp_path, monkeypatch):
     monkeypatch.setattr(
         config, "_MAC_GLOBS", [str(tmp_path / "Applications/*/PrusaSlicer.app/Contents/MacOS/PrusaSlicer")]
     )
-    monkeypatch.setattr(config, "_WIN_GLOBS", [str(tmp_path / "ProgramFiles/PrusaSlicer/prusa-slicer-console.exe")])
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "ProgramFiles"))
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "ProgramFiles (x86)"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
     return SimpleNamespace(root=tmp_path, home=home, path_dir=path_dir)
 
 
 def on_platform(monkeypatch, name):
     monkeypatch.setattr(config, "sys", SimpleNamespace(platform=name))
+
+
+needs_posix_permissions = pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows reports every existing file as executable (os.access ignores the mode)"
+)
 
 
 def make_file(path, executable=True):
@@ -77,7 +89,7 @@ def test_tilde_in_prusaslicer_path_is_expanded(machine, monkeypatch):
     assert found == expected
 
 
-@pytest.mark.parametrize("problem", ["not-executable", "missing"])
+@pytest.mark.parametrize("problem", [pytest.param("not-executable", marks=needs_posix_permissions), "missing"])
 def test_invalid_prusaslicer_path_is_an_error_not_a_fallback(machine, monkeypatch, problem):
     # Given PRUSASLICER_PATH is set to something unusable, while a working one is on PATH
     bad = machine.root / "bad/PrusaSlicer"
@@ -117,6 +129,7 @@ def test_macos_install_in_a_nonstandard_folder_is_found(machine, monkeypatch):
     assert found == expected
 
 
+@needs_posix_permissions
 def test_non_executable_file_at_an_install_location_is_skipped(machine, monkeypatch):
     # Given a Mac install location holding a file that is not executable
     on_platform(monkeypatch, "darwin")
@@ -130,7 +143,7 @@ def test_non_executable_file_at_an_install_location_is_skipped(machine, monkeypa
 def test_windows_install_location_is_found(machine, monkeypatch):
     # Given a Windows machine with PrusaSlicer's console executable in its install folder
     on_platform(monkeypatch, "win32")
-    expected = make_file(machine.root / "ProgramFiles/PrusaSlicer/prusa-slicer-console.exe")
+    expected = make_file(machine.root / "ProgramFiles/Prusa3D/PrusaSlicer/prusa-slicer-console.exe")
 
     # When the executable is located
     found = find_executable()
@@ -140,11 +153,116 @@ def test_windows_install_location_is_found(machine, monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "location",
+    [
+        "ProgramFiles (x86)/Prusa3D/PrusaSlicer/prusa-slicer-console.exe",
+        "ProgramFiles/PrusaSlicer/prusa-slicer-console.exe",
+        "ProgramFiles/Prusa3D/PrusaSlicer-2.9.7/prusa-slicer-console.exe",
+        "LocalAppData/Programs/PrusaSlicer/prusa-slicer-console.exe",
+        "LocalAppData/Programs/PrusaSlicer-2.9.7/prusa-slicer-console.exe",
+    ],
+    ids=[
+        "x86-program-files",
+        "without-the-vendor-folder",
+        "versioned-folder",
+        "per-user-install",
+        "per-user-versioned",
+    ],
+)
+def test_windows_installs_in_other_usual_places_are_found(machine, monkeypatch, location):
+    # Given a Windows machine whose PrusaSlicer is somewhere other than the default folder
+    on_platform(monkeypatch, "win32")
+    expected = make_file(machine.root / location)
+
+    # When the executable is located
+    found = find_executable()
+
+    # Then the install is found
+    assert found == expected
+
+
+def test_windows_install_locations_follow_the_environment_not_the_c_drive(machine, monkeypatch):
+    # Given Program Files on another drive, as the environment reports it
+    on_platform(monkeypatch, "win32")
+    monkeypatch.setenv("ProgramFiles", str(machine.root / "D-drive/Programmes"))
+    expected = make_file(machine.root / "D-drive/Programmes/Prusa3D/PrusaSlicer/prusa-slicer-console.exe")
+
+    # When the executable is located
+    found = find_executable()
+
+    # Then it is found there
+    assert found == expected
+
+
+def test_a_program_files_folder_with_glob_characters_in_its_name_is_still_searched(machine, monkeypatch):
+    # Given a Program Files folder whose name contains square brackets, which a glob would read as a character set
+    on_platform(monkeypatch, "win32")
+    monkeypatch.setenv("ProgramFiles", str(machine.root / "Programs [work]"))
+    expected = make_file(machine.root / "Programs [work]/Prusa3D/PrusaSlicer/prusa-slicer-console.exe")
+
+    # When the executable is located
+    found = find_executable()
+
+    # Then the folder is taken literally and the install is found
+    assert found == expected
+
+
+def test_windows_without_the_environment_variables_finds_nothing_and_does_not_crash(machine, monkeypatch):
+    # Given a Windows machine where the usual folder variables are missing
+    on_platform(monkeypatch, "win32")
+    for var in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        monkeypatch.delenv(var)
+
+    # When / Then the search ends in the normal "not found" error
+    with pytest.raises(PrusaSlicerNotFound):
+        find_executable()
+
+
+def test_the_console_build_is_used_when_given_the_gui_build_next_to_it(machine, monkeypatch):
+    # Given PRUSASLICER_PATH pointing at the Windows GUI program, which writes nothing to stdout,
+    # with the console program beside it
+    gui = make_file(machine.root / "PrusaSlicer/prusa-slicer.exe")
+    console = make_file(machine.root / "PrusaSlicer/prusa-slicer-console.exe")
+    monkeypatch.setenv("PRUSASLICER_PATH", str(gui))
+
+    # When the executable is located
+    found = find_executable()
+
+    # Then the console build is used, so warnings and errors are not lost
+    assert found == console
+
+
+def test_the_console_build_is_used_when_the_gui_build_is_found_on_path(machine, monkeypatch):
+    # Given the GUI program on PATH (Windows adds the extension, whatever its case), with the console program beside it
+    gui = make_file(machine.root / "PrusaSlicer/prusa-slicer.EXE")
+    console = make_file(machine.root / "PrusaSlicer/prusa-slicer-console.exe")
+    monkeypatch.setattr(config.shutil, "which", lambda name: str(gui) if name == "prusa-slicer" else None)
+
+    # When the executable is located
+    found = find_executable()
+
+    # Then the console build is used
+    assert found == console
+
+
+def test_the_gui_build_is_kept_when_there_is_no_console_build(machine, monkeypatch):
+    # Given PRUSASLICER_PATH pointing at a GUI program with no console program beside it
+    gui = make_file(machine.root / "PrusaSlicer/prusa-slicer.exe")
+    monkeypatch.setenv("PRUSASLICER_PATH", str(gui))
+
+    # When the executable is located
+    found = find_executable()
+
+    # Then what the user pointed at is used as it is
+    assert found == gui
+
+
+@pytest.mark.parametrize(
     ("platform", "foreign_location"),
     [
         ("linux", "Applications/Custom/PrusaSlicer.app/Contents/MacOS/PrusaSlicer"),
-        ("linux", "ProgramFiles/PrusaSlicer/prusa-slicer-console.exe"),
-        ("darwin", "ProgramFiles/PrusaSlicer/prusa-slicer-console.exe"),
+        ("linux", "ProgramFiles/Prusa3D/PrusaSlicer/prusa-slicer-console.exe"),
+        ("darwin", "ProgramFiles/Prusa3D/PrusaSlicer/prusa-slicer-console.exe"),
         ("win32", "Applications/Custom/PrusaSlicer.app/Contents/MacOS/PrusaSlicer"),
     ],
     ids=["linux-ignores-mac", "linux-ignores-windows", "mac-ignores-windows", "windows-ignores-mac"],
