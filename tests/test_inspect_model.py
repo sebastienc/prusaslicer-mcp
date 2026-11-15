@@ -252,9 +252,9 @@ async def test_a_directory_is_not_a_model_file(tmp_path):
         await server.inspect_model(str(tmp_path))
 
 
-async def test_a_model_path_may_start_with_a_tilde(tmp_path, monkeypatch):
+async def test_a_model_path_may_start_with_a_tilde(tmp_path, set_home):
     # Given a model in the home directory and a path written with "~"
-    monkeypatch.setenv("HOME", str(tmp_path))
+    set_home(tmp_path)
     save(cube(), tmp_path / "cube.stl")
 
     # When it is inspected

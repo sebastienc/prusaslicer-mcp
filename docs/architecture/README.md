@@ -44,7 +44,7 @@ src/prusaslicer_mcp/
 scripts/dogfood/     opt-in sweep that runs every tool over a folder of real models (docs/dogfooding.md)
 tests/               unit tests (no PrusaSlicer) plus a few integration tests; see Testing below
 .github/
-  workflows/ci.yml             lint, types, audit, unit (3.12-3.14), lowest dependency versions, package build, integration (macOS), commitlint
+  workflows/ci.yml             lint, types, audit, unit (3.12-3.14), lowest dependency versions, package build, integration (macOS), unit and integration on Windows, commitlint
   workflows/release-please.yml release pull request from Conventional Commits; on release, build and publish to PyPI
   scripts/setup-prusaslicer-macos.sh   installs PrusaSlicer and a throwaway data directory for CI
 ```
@@ -122,7 +122,7 @@ Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `Pru
 
 On Windows PrusaSlicer ships two programs: `prusa-slicer.exe` (the GUI build) writes nothing to stdout, so warnings and error text would be lost, and `prusa-slicer-console.exe` is the one a tool can use. Whichever way the executable was found, a `prusa-slicer.exe` with a `prusa-slicer-console.exe` beside it is replaced by the console build; without one, what the user chose is used as it is.
 
-Text files PrusaSlicer writes (the `--query-*` JSON) are read as UTF-8, because Python's default on Windows is a code page. The install locations above and the `%APPDATA%\PrusaSlicer` data folder are known from Prusa's installer but have not been checked on a Windows machine yet (see the roadmap).
+Text files PrusaSlicer writes (the `--query-*` JSON) are read as UTF-8, because Python's default on Windows is a code page. CI runs the unit tests and the integration tests on Windows, against the official portable `.zip` with `prusa-slicer-console.exe` (`.github/scripts/setup-prusaslicer-windows.ps1` unpacks it and builds a throwaway data folder). That proves the process handling, the query output and slicing on Windows. The installer's folders (`Program Files\Prusa3D\PrusaSlicer`, per-user) and the `%APPDATA%\PrusaSlicer` data folder come from Prusa's installer and are unit-tested, but have not been tried on a real installed copy.
 
 ### Client registration
 
@@ -166,7 +166,7 @@ crashes, timeouts, refusals, warnings and suspicious results ([docs/dogfooding.m
 | Integration | a real PrusaSlicer; marked `integration` automatically when a test uses the `prusaslicer` fixture, and skipped when no install is found | `tests/test_server.py` |
 
 CI (`.github/workflows/ci.yml`) runs these jobs: lint and format, type check (`ty` via `uv check`, pinned, then pyright; [ADR 0010](../decisions/0010-pin-ty-and-add-pyright.md)), dependency audit, unit tests on
-Python 3.12, 3.13 and 3.14 with a 95% coverage floor, the unit tests again with every direct dependency at its lowest allowed version (so the declared lower bounds are true), a package job that builds the wheel and sdist, installs the wheel in a clean environment and runs `twine check --strict`, integration tests on macOS, and commitlint, then a final `ci` job that depends on all of them and fails unless each one succeeded. Branch protection requires that one `ci` check (GitHub names checks after jobs, not workflows), so adding or renaming a job never breaks the ruleset; a new job must be added to the `ci` job's `needs`. The integration job
+Python 3.12, 3.13 and 3.14 with a 95% coverage floor, the unit tests again with every direct dependency at its lowest allowed version (so the declared lower bounds are true), a package job that builds the wheel and sdist, installs the wheel in a clean environment and runs `twine check --strict`, integration tests on macOS, unit and integration tests on Windows, and commitlint, then a final `ci` job that depends on all of them and fails unless each one succeeded. Branch protection requires that one `ci` check (GitHub names checks after jobs, not workflows), so adding or renaming a job never breaks the ruleset; a new job must be added to the `ci` job's `needs`. The integration job
 installs the official 2.9.7 `.dmg` (cached by version, `PRUSASLICER_VERSION` in the workflow) and builds a
 throwaway data directory from the profiles inside the app. Linux is not covered because Prusa no longer attaches Linux
 builds to its GitHub releases.
