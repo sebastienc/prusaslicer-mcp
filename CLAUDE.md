@@ -2,7 +2,7 @@
 
 MCP server (Python, stdio) that lets Claude drive the **PrusaSlicer 2.9.x command line**: list
 printers/profiles, check and preview a model, suggest which way up to print it, slice headlessly with the
-user's real profiles, return print stats. It does not control the GUI. Private repo, MIT.
+user's real profiles, return print stats. It does not control the GUI. Public, MIT; published to PyPI as `prusaslicer-mcp` (ADR 0020).
 
 ## Where things are
 

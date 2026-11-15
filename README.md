@@ -10,6 +10,8 @@ It does **not** control the GUI itself (PrusaSlicer 2.9.x has no remote-control 
 
 **Status:** early. Seven tools, tested against PrusaSlicer 2.9.7 on macOS. See the [roadmap](ROADMAP.md).
 
+*An independent project. It is not affiliated with, endorsed by or supported by Prusa Research. PrusaSlicer and Prusa are trademarks of Prusa Research a.s.*
+
 ## Example
 
 Once registered with an MCP client, you can ask things like:
@@ -43,20 +45,21 @@ Profile names must match exactly; use `list_printers` and `list_profiles` to dis
 **Projects.** A 3MF saved from PrusaSlicer carries its own settings (supports, brim, infill...). Slice it with no profiles to keep them; passing profiles makes PrusaSlicer ignore them and use the plain profile values ([ADR 0007](docs/decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md)). `inspect_model` shows what a project saves.
 G-code is always written as text (`--binary-gcode=0`) so statistics can be read back.
 
-## Setup
+## Install
 
-Requires Python 3.12+, [uv](https://docs.astral.sh/uv/), and PrusaSlicer 2.9.x.
+Requires Python 3.12+ and PrusaSlicer 2.9.x. The easiest way is [uv](https://docs.astral.sh/uv/), which runs the
+server without a separate install step:
 
 ```bash
-uv sync
-cp .env.example .env     # then edit; see below
-direnv allow             # optional: loads .env into your shell
-uv run pytest            # integration tests are skipped if PrusaSlicer isn't found
+uvx prusaslicer-mcp
 ```
 
-In VS Code, open `prusaslicer-mcp.code-workspace` (interpreter, pytest, tasks, debug configs and recommended extensions are preconfigured).
+or install it with `pip install prusaslicer-mcp` (or `pipx install prusaslicer-mcp`) and run `prusaslicer-mcp`.
+The server talks MCP over stdio, so you normally do not run it yourself: you register it with a client, below.
 
-### Configuration (`.env`)
+### Configuration
+
+
 
 | Variable | Purpose | Default |
 |---|---|---|
@@ -65,25 +68,36 @@ In VS Code, open `prusaslicer-mcp.code-workspace` (interpreter, pytest, tasks, d
 | `PRUSASLICER_MCP_OUTPUT_DIR` | Where G-code goes when no output path is given; created in full if missing | `./output` |
 | `PRUSASLICER_MCP_TIMEOUT` | Slice timeout (seconds, must be positive) | `600` |
 
-## Register with Claude Code
+## Register with an MCP client
+
+**Claude Code:**
 
 ```bash
 claude mcp add prusaslicer \
-  -e PRUSASLICER_PATH="/path/to/PrusaSlicer" \
-  -- uv --directory /path/to/prusaslicer-mcp run prusaslicer-mcp
+  -e PRUSASLICER_MCP_OUTPUT_DIR="$HOME/prusaslicer-output" \
+  -- uvx prusaslicer-mcp
 ```
 
-`PRUSASLICER_PATH` is only needed when auto-detection fails (e.g. a nonstandard install folder; quote
-paths containing spaces). `claude mcp list` should then show `prusaslicer`. Other MCP clients need the same
-command and an `env` block.
+**Claude Desktop and other clients** take the same command in their configuration file:
 
-### Project scope (this repo)
+```json
+{
+  "mcpServers": {
+    "prusaslicer": {
+      "command": "uvx",
+      "args": ["prusaslicer-mcp"],
+      "env": { "PRUSASLICER_MCP_OUTPUT_DIR": "/Users/you/prusaslicer-output" }
+    }
+  }
+}
+```
 
-The repository ships a `.mcp.json` that registers the server for anyone working in this checkout
-(`claude mcp add --scope project prusaslicer -- uv run prusaslicer-mcp`). It contains no paths: `uv run`
-resolves the project from the working directory, and PrusaSlicer is auto-detected. If detection fails, set
-`PRUSASLICER_PATH` in the environment `claude` is launched from (for example via direnv and `.env`). Claude
-Code asks you to approve project-scoped servers the first time; `claude mcp list` shows the status.
+Set `PRUSASLICER_MCP_OUTPUT_DIR`: the default, `./output`, is relative to wherever the client starts the server,
+which is rarely a folder you want G-code in. `PRUSASLICER_PATH` is only needed when auto-detection fails (a
+nonstandard install folder; quote paths containing spaces). `claude mcp list` should show `prusaslicer`.
+
+These are ordinary environment variables, so give them through the client's `env` setting, as above. The `.env`
+file in a clone is only a convenience for development.
 
 ## Notes
 
@@ -104,6 +118,19 @@ Code asks you to approve project-scoped servers the first time; `claude mcp list
 - FFF (filament) slicing only; single material; no transform options yet. See the [roadmap](ROADMAP.md).
 
 ## Development
+
+Work from a clone (see [CONTRIBUTING.md](CONTRIBUTING.md)):
+
+```bash
+git clone https://github.com/sebastienc/prusaslicer-mcp && cd prusaslicer-mcp
+uv sync
+cp .env.example .env     # then edit; machine-specific, git-ignored
+direnv allow             # optional: loads .env into your shell
+claude mcp add --scope project prusaslicer -- uv run prusaslicer-mcp   # run the checkout, not the PyPI release
+```
+
+The repository ships a `.mcp.json` that registers the checkout for Claude Code (it contains no paths; `uv run`
+resolves the project from the working directory). In VS Code, open `prusaslicer-mcp.code-workspace`.
 
 Everything runs through `uv`; [Poe the Poet](https://poethepoet.natn.io/) chains the checks (uv has no task runner).
 
@@ -131,4 +158,6 @@ pull request from them. See [ADR 0008](docs/decisions/0008-conventional-commits-
 
 ## License
 
-MIT. PrusaSlicer itself is AGPL-3.0 and is invoked as a separate program, not bundled.
+[MIT](LICENSE). PrusaSlicer itself is AGPL-3.0 and is invoked as a separate program, not bundled or linked.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to help, and [SECURITY.md](SECURITY.md) to report a vulnerability.
