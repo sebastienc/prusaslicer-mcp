@@ -119,7 +119,21 @@ async def test_the_profile_caption_warns_about_an_empty_stretch(gapped):
 
 
 async def test_arc_moves_that_were_not_drawn_are_mentioned(tmp_path):
-    # Given G-code whose printer profile used arc fitting
+    # Given G-code with an arc written by radius (R), which cannot be drawn without its centre
+    path = tmp_path / "arcs.gcode"
+    path.write_text(
+        "M83\n;LAYER_CHANGE\n;Z:0.2\n;TYPE:Perimeter\nG1 X0 Y0 F9000\nG1 X10 Y0 E0.5\nG2 X20 Y10 R10 E0.8\n"
+    )
+
+    # When a client asks for a preview
+    result = await preview(gcode_path=str(path))
+
+    # Then the caption says that one arc move is missing from the picture
+    assert "1 arc move" in caption(result)
+
+
+async def test_arcs_with_a_centre_are_drawn_and_not_reported_as_missing(tmp_path):
+    # Given G-code with an arc fitted by the slicer (centre given as I and J)
     path = tmp_path / "arcs.gcode"
     path.write_text(
         "M83\n;LAYER_CHANGE\n;Z:0.2\n;TYPE:Perimeter\nG1 X0 Y0 F9000\nG1 X10 Y0 E0.5\nG2 X20 Y10 I10 J0 E0.8\n"
@@ -128,8 +142,8 @@ async def test_arc_moves_that_were_not_drawn_are_mentioned(tmp_path):
     # When a client asks for a preview
     result = await preview(gcode_path=str(path))
 
-    # Then the caption says that one arc move is missing from the picture
-    assert "1 arc move" in caption(result)
+    # Then the caption does not claim anything is missing
+    assert "not drawn" not in caption(result)
 
 
 async def test_a_layer_with_the_silhouette_view_is_refused(five_layers):

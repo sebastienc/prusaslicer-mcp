@@ -12,6 +12,7 @@ When an item ships, move it to **Done** and update the README and architecture d
 
 ### Tools
 
+- `preview_gcode` draws `G2`/`G3` arcs, so an arc-fitted print no longer looks empty; before, arcs were counted but not drawn, which made a full first layer look blank while checking the statue.
 - The core tools `list_printers`, `list_profiles`, `inspect_model` and `slice_model`, wrapping the PrusaSlicer 2.9.x command line ([ADR 0002](docs/decisions/0002-wrap-the-prusaslicer-2-9-cli.md)), with G-code statistics: time, filament length, volume and weight summed across extruders, cost and layers.
 - PrusaSlicer projects keep their own saved settings: profiles are optional for a saved project, `inspect_model` reports what it stores, and the result says which settings applied ([ADR 0007](docs/decisions/0007-slice-prusaslicer-projects-with-their-own-settings.md)).
 - Transforms with PrusaSlicer's own flags: `rotate_x/y/z`, `scale`, `scale_to_fit`, `split` and `copies`, also on projects ([ADR 0012](docs/decisions/0012-transform-with-prusaslicers-own-flags.md)). Plain 3MF files are centred on the bed by default ([ADR 0013](docs/decisions/0013-centre-plain-3mf-files-automatically.md)).
@@ -40,7 +41,7 @@ When an item ships, move it to **Done** and update the README and architecture d
 
 In rough order, with the reason each is here. After a change to slicing, previewing, inspection or G-code parsing, run the dogfood sweep.
 
-1. **Draw `G2`/`G3` arcs in `preview_gcode`.** Arcs are counted but not drawn, so a layer printed as arcs looks empty: it made a full first layer look blank while checking the statue. `preview_gcode` is the tool used to verify a slice, so it should not have a blind spot like that. Also speed up the G-code parse for very large files.
+1. **Speed up the G-code parse for very large files.** `preview_gcode` reads the file in plain Python in two passes (about 2 s per million extruding moves), and an arc-fitted print now expands each arc into many short moves.
 2. **Make the dogfood sweep see the first layer.** The sweep reports that a slice succeeded, not that it would stick to the bed. Report each slice's first-layer filament against its second (`gcode.filament_by_feature` and the layer markers give it) and flag a first layer that is a small fraction: that would have caught the capped statue's single-point base automatically.
 3. **Calibrate the orientation scores on more models.** Geometry picked the measured winner on four of five models (ADR 0019); the miss was a pipe elbow whose as-stored orientation, flagged unstable by the 5% line, cost 9.5 g less support. Recheck the 5% stability line and the 10% tie rule, add bridging, and propose a candidate at an arbitrary angle for curved models.
 4. **Cover the defensive branches.** Coverage is 98%; the misses are paths that are meant to be rare: a loop that cannot be triangulated or has no area (`repair.py`), a G-code with a reset or arc in an unusual place (`gcode.py`), and a few more. Test them or delete them.
