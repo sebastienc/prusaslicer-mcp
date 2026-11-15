@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/sebastienc/prusaslicer-mcp/compare/prusaslicer-mcp-v0.2.0...prusaslicer-mcp-v0.3.0) (2026-11-15)
+
+
+### Features
+
+* draw the bed in model previews ([22c09e0](https://github.com/sebastienc/prusaslicer-mcp/commit/22c09e0cf8a9aa676f1b662d2f8f7d2222d61e86))
+* measure real support when suggesting orientations ([aee76ed](https://github.com/sebastienc/prusaslicer-mcp/commit/aee76edf10eb4a7c03458ad07e38e77638bdefe9))
+
 ## [0.2.0](https://github.com/sebastienc/prusaslicer-mcp/compare/prusaslicer-mcp-v0.1.1...prusaslicer-mcp-v0.2.0) (2026-11-15)
 
 
