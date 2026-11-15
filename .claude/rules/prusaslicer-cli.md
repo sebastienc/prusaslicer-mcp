@@ -18,4 +18,5 @@ This project wraps the **PrusaSlicer 2.9.x command line** and nothing else (see 
 - Read-only discovery must not modify the user's PrusaSlicer data directory. Do not use `--save` or other options that write into it. Generated files go to the configured output directory or a temp dir.
 - Executable and data-directory lookup lives in `config.py` only. Do not hard-code install paths elsewhere. Respect `PRUSASLICER_PATH` / `PRUSASLICER_DATADIR` first.
 - G-code statistics come from comments PrusaSlicer writes in the footer. If a new stat is needed, extend `gcode.py` and add a case to `tests/test_gcode.py` with a realistic sample.
+- `--export-stl` turns a STEP file into a mesh and applies PrusaSlicer's own transform flags for previews (ADR 0015, 0016). It writes into a temporary folder, exits 0 on success and 1 with no file for a broken input, so judge it by the exit code and the file together.
 - Anything specific to PrusaSlicer **3.x** (Lua plugins, new CLI layout) is out of scope until a new ADR says otherwise.
