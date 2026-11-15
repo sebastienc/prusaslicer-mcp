@@ -596,7 +596,7 @@ async def preview_model(
             mesh = await _load_model_mesh(path)
 
     try:
-        picture = render_model(mesh, view, size)
+        picture = render_model(mesh, view, size, bed=True)
     except ValueError as e:
         raise ToolError(str(e)) from e
     x, y, z = (float(v) for v in mesh.extents)
@@ -610,8 +610,8 @@ async def preview_model(
     caption = " ".join(
         [
             f"{path.name}, {where}. Size {x:.1f} x {y:.1f} x {z:.1f} mm (x, y, z). Z is up and the model is drawn "
-            f"{how}, centred. PrusaSlicer also prints with z up, so a model that looks to be lying on its side would "
-            "be printed that way.",
+            f"{how}, centred. The pale grid is the bed, level with the model's lowest point. PrusaSlicer also prints "
+            "with z up, so a model that looks to be lying on its side would be printed that way.",
             *notes,
         ]
     )

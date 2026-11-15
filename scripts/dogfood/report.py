@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image
 
 from prusaslicer_mcp.preview_gcode import INK
-from prusaslicer_mcp.preview_model import BACKGROUND
+from prusaslicer_mcp.preview_model import BACKGROUND, BED_FILL, BED_LINE
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -141,7 +141,10 @@ def image_outliers(out_dir: Path, rows: list[Row], count: int = 3) -> dict[str, 
             continue
         if (folder / "model.png").exists():
             pixels = np.asarray(Image.open(folder / "model.png").convert("RGB"))
-            fill.append((name, float((pixels != np.array(BACKGROUND, dtype=np.uint8)).any(axis=2).mean())))
+            empty = np.zeros(pixels.shape[:2], dtype=bool)
+            for colour in (BACKGROUND, BED_FILL, BED_LINE):  # the bed is drawn even when the model is not
+                empty |= (pixels == np.array(colour, dtype=np.uint8)).all(axis=2)
+            fill.append((name, float((~empty).mean())))
         if (folder / "print.png").exists():
             pixels = np.asarray(Image.open(folder / "print.png").convert("RGB"))
             ink.append((name, float((pixels == np.array(INK, dtype=np.uint8)).all(axis=2).sum())))

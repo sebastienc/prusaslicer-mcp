@@ -11,15 +11,20 @@ import io
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 if TYPE_CHECKING:
     import trimesh
 
 BACKGROUND = (245, 245, 245)
+BED_FILL = (228, 231, 238)  # the bed plane under the model
+BED_LINE = (186, 193, 207)  # its outline and its 10 mm grid
 _BASE_COLOR = np.array((120, 170, 220), dtype=np.float64)
 _SAMPLES_PER_PIXEL = 6
 _MARGIN = 0.9  # the model fills this fraction of the picture, leaving a border
+_BED_MARGIN = 0.12  # the bed reaches this fraction of the footprint (plus 1 mm) past the model on every side
+_BED_GRID_MM = 10.0
+_BED_MAX_GRID_LINES = 40
 
 # (azimuth, elevation) in degrees. Z is up; "front" looks along +y, "side" along -x, "top" straight down.
 VIEWS = {"iso": (-40.0, 28.0), "front": (0.0, 0.0), "side": (-90.0, 0.0), "top": (0.0, 90.0)}
@@ -57,7 +62,36 @@ def _fill_gaps(pixels: np.ndarray, filled: np.ndarray, passes: int = 2) -> None:
         filled |= hole
 
 
-def _render_view(mesh: trimesh.Trimesh, azimuth: float, elevation: float, size: int) -> Image.Image:
+def _bed_layer(vertices: np.ndarray, rotation: np.ndarray, scale: float, size: int) -> np.ndarray:
+    """The bed as a picture: a plane at the model's lowest point, a little wider than its footprint, with a grid.
+
+    Drawn with Pillow's polygon and line primitives, which clip to the picture and are exact, so a bed that spills
+    over the edge is cut off and not smeared. Seen edge-on it is a single line.
+    """
+    low, high = vertices.min(axis=0), vertices.max(axis=0)
+    margin = _BED_MARGIN * max(high[0] - low[0], high[1] - low[1]) + 1.0
+    x0, x1, y0, y1, z = low[0] - margin, high[0] + margin, low[1] - margin, high[1] + margin, low[2]
+
+    def screen(x: float, y: float) -> tuple[float, float]:
+        view = rotation @ np.array([x, y, z])
+        return float(view[0] * scale + size / 2), float(size / 2 - view[2] * scale)
+
+    layer = Image.new("RGB", (size, size), BACKGROUND)
+    draw = ImageDraw.Draw(layer)
+    corners = [screen(x0, y0), screen(x1, y0), screen(x1, y1), screen(x0, y1)]
+    draw.polygon(corners, fill=BED_FILL)
+    spacing = _BED_GRID_MM
+    while max(x1 - x0, y1 - y0) / spacing > _BED_MAX_GRID_LINES:
+        spacing *= 2
+    for offset in np.arange(spacing, x1 - x0, spacing):
+        draw.line([screen(x0 + offset, y0), screen(x0 + offset, y1)], fill=BED_LINE)
+    for offset in np.arange(spacing, y1 - y0, spacing):
+        draw.line([screen(x0, y0 + offset), screen(x1, y0 + offset)], fill=BED_LINE)
+    draw.line([*corners, corners[0]], fill=BED_LINE)
+    return np.asarray(layer)
+
+
+def _render_view(mesh: trimesh.Trimesh, azimuth: float, elevation: float, size: int, bed: bool = False) -> Image.Image:
     rotation = _rotation(azimuth, elevation)
     centred = mesh.vertices - mesh.bounds.mean(axis=0)
     extent = np.abs(centred @ rotation.T).max() * 2.0
@@ -83,7 +117,10 @@ def _render_view(mesh: trimesh.Trimesh, azimuth: float, elevation: float, size: 
     brightness = 0.35 + 0.65 * np.abs(normals @ light)  # two-sided, so open or badly wound meshes still read
 
     pixels = np.empty((size, size, 3), dtype=np.uint8)
-    pixels[:] = BACKGROUND
+    if bed:  # the bed is under the model, so it goes down first and the model is painted over it
+        pixels[:] = _bed_layer(centred, rotation, scale, size)
+    else:
+        pixels[:] = BACKGROUND
     order = np.argsort(-depth, kind="stable")  # far first, so the nearest point is written last and wins
     pixels[rows[order], columns[order]] = (_BASE_COLOR[None, :] * brightness[order, None]).astype(np.uint8)
 
@@ -93,23 +130,24 @@ def _render_view(mesh: trimesh.Trimesh, azimuth: float, elevation: float, size: 
     return Image.fromarray(pixels)
 
 
-def render_model(mesh: trimesh.Trimesh, view: str = "iso", size: int = 640) -> Image.Image:
+def render_model(mesh: trimesh.Trimesh, view: str = "iso", size: int = 640, bed: bool = False) -> Image.Image:
     """A size x size picture of a mesh: one of iso, front, side, top, or `sheet` (all four in one picture).
 
-    The mesh is drawn as stored (z up), centred, whatever its position. Raises ValueError for an unknown view or
-    a mesh with no surface.
+    The mesh is drawn as stored (z up), centred, whatever its position. With `bed` a pale grid plane is drawn at its
+    lowest point, which is where it rests on PrusaSlicer's bed. Raises ValueError for an unknown view or a mesh with
+    no surface.
     """
     if view not in ALL_VIEWS:
         raise ValueError(f"Unknown view {view!r}. Choose one of: {', '.join(ALL_VIEWS)}")
     if not mesh.area > 0:
         raise ValueError("This mesh has no surface to draw (every triangle is degenerate).")
     if view != "sheet":
-        return _render_view(mesh, *VIEWS[view], size)
+        return _render_view(mesh, *VIEWS[view], size, bed)
 
     half = size // 2
     sheet = Image.new("RGB", (size, size), BACKGROUND)
     for index, name in enumerate(SHEET_ORDER):
-        sheet.paste(_render_view(mesh, *VIEWS[name], half), ((index % 2) * half, (index // 2) * half))
+        sheet.paste(_render_view(mesh, *VIEWS[name], half, bed), ((index % 2) * half, (index // 2) * half))
     return sheet
 
 

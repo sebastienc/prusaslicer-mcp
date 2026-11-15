@@ -137,9 +137,9 @@ async def test_close_holes_alone_draws_the_capped_mesh(fake_export, open_scan, m
     drawn: list[trimesh.Trimesh] = []
     draw = server.render_model
 
-    def recording(mesh, view, size):
+    def recording(mesh, view, size, bed=False):
         drawn.append(mesh)
-        return draw(mesh, view, size)
+        return draw(mesh, view, size, bed)
 
     monkeypatch.setattr(server, "render_model", recording)
 
