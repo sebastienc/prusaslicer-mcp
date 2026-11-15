@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import trimesh
 from conftest import PROJECT_CONFIG
@@ -1214,6 +1215,32 @@ async def test_close_holes_slices_a_capped_copy_named_like_the_model(fake_prusas
     assert given_to_prusaslicer(fake_prusaslicer).is_watertight
     assert result.holes_closed == 1
     assert any("capped 1" in warning for warning in result.warnings)
+
+
+async def test_the_warning_says_how_far_an_uneven_rim_was_carried_to_make_the_base_flat(fake_prusaslicer, tmp_path):
+    # Given a scan with no base whose rim has every other point raised 1 mm
+    full = trimesh.creation.cylinder(radius=10, height=30, sections=48)
+    vertices = full.vertices.copy()
+    rim = np.flatnonzero(vertices[:, 2] < -14.99)
+    vertices[rim[::2], 2] += 1.0
+    scan = tmp_path / "ragged.stl"
+    trimesh.Trimesh(vertices, full.faces[full.face_normals[:, 2] > -0.99], process=False).export(scan)
+
+    # When it is sliced with close_holes
+    result = await slice_it(scan, close_holes=True)
+
+    # Then the warning says the base was extended by up to 1.0 mm
+    assert any("extended by up to 1.0 mm" in warning for warning in result.warnings)
+
+
+async def test_a_level_rim_is_capped_without_mentioning_an_extension(fake_prusaslicer, open_scan):
+    # Given a scan with no base whose rim is level
+
+    # When it is sliced with close_holes
+    result = await slice_it(open_scan, close_holes=True)
+
+    # Then the warning does not talk about extending the base
+    assert not any("extended" in warning for warning in result.warnings)
 
 
 async def test_close_holes_leaves_the_original_file_and_no_working_files(fake_prusaslicer, open_scan):

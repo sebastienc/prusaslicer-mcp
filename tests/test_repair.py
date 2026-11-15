@@ -237,3 +237,84 @@ def test_an_open_chain_with_loose_ends_is_not_closable_and_does_not_crash(open_c
     assert not any(hole.closable for hole in holes)
     assert closed.closed == 0
     assert len(closed.mesh.faces) == len(mesh.faces)
+
+
+# --------------------------------------------------------------------------- a ragged rim still gets a flat base
+
+
+def _ragged(cylinder: trimesh.Trimesh, raised, amount: float) -> trimesh.Trimesh:
+    """The open cylinder with some points of its rim raised by `amount`, like the uneven edge of a scanned base."""
+    vertices = cylinder.vertices.copy()
+    rim = np.flatnonzero(vertices[:, 2] < -14.99)
+    vertices[rim[np.asarray(raised(len(rim)), dtype=bool)], 2] += amount
+    return trimesh.Trimesh(vertices, cylinder.faces, process=False)
+
+
+EVERY_OTHER = lambda count: np.arange(count) % 2 == 0  # noqa: E731  (a symmetric pattern: the base stays level)
+RANDOM_70 = lambda count: np.random.default_rng(7).random(count) < 0.7  # noqa: E731  (some points stay on the plane)
+
+
+@pytest.mark.parametrize("raised", [EVERY_OTHER, RANDOM_70], ids=["every other point", "random points"])
+def test_a_ragged_rim_is_closed_with_a_watertight_mesh(open_cylinder, raised):
+    # Given a cylinder with no bottom whose rim is uneven, with some points left on the lowest level
+    scan = _ragged(open_cylinder, raised, amount=1.0)
+
+    # When its hole is closed
+    closed = repair.close_holes(scan)
+
+    # Then the mesh is watertight and consistently wound
+    assert closed.closed == 1
+    assert closed.mesh.is_watertight
+    assert closed.mesh.is_winding_consistent
+
+
+def test_the_base_over_a_ragged_rim_is_one_flat_plane(open_cylinder):
+    # Given a cylinder with no bottom whose rim has every other point raised 1 mm
+    scan = _ragged(open_cylinder, EVERY_OTHER, amount=1.0)
+
+    # When its hole is closed
+    closed = repair.close_holes(scan)
+
+    # Then every cap face lies in the plane of the outermost rim point, so the base prints flat
+    lowest = closed.mesh.vertices[:, 2].min()
+    in_plane = np.isclose(closed.mesh.vertices[:, 2], lowest, atol=1e-9)
+    cap = closed.mesh.faces[in_plane[closed.mesh.faces].all(axis=1)]
+    assert len(cap) >= 46  # a 48-point ring has at least 46 triangles
+    triangles = closed.mesh.vertices[cap]
+    normals = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
+    assert (normals[:, 2] < 0).all()  # all of them face down, outward
+
+
+def test_the_rim_is_carried_down_to_the_base_and_the_distance_is_reported(open_cylinder):
+    # Given a cylinder with no bottom whose rim has every other point raised 1 mm
+    scan = _ragged(open_cylinder, EVERY_OTHER, amount=1.0)
+
+    # When its hole is closed
+    closed = repair.close_holes(scan)
+
+    # Then the base was extended by the 1 mm the raised points were short of the plane
+    assert closed.extended_mm == pytest.approx(1.0, abs=1e-6)
+
+
+def test_closing_never_moves_an_existing_vertex(open_cylinder):
+    # Given a ragged scan and its vertices
+    scan = _ragged(open_cylinder, RANDOM_70, amount=1.0)
+    before = scan.vertices.copy()
+
+    # When its hole is closed
+    closed = repair.close_holes(scan)
+
+    # Then the original vertices are where they were, and only new ones were added
+    assert len(closed.mesh.vertices) > len(before)
+    assert np.array_equal(closed.mesh.vertices[: len(before)], before)
+
+
+def test_a_level_rim_needs_no_extra_vertices(open_cylinder):
+    # Given a cylinder with no bottom and a level rim
+
+    # When its hole is closed
+    closed = repair.close_holes(open_cylinder)
+
+    # Then nothing is carried or added: the cap joins the rim directly
+    assert closed.extended_mm == 0.0
+    assert len(closed.mesh.vertices) == len(open_cylinder.vertices)

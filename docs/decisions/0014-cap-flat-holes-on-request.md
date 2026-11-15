@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted (the cap is refined by ADR 0017)
 date: 2026-11-14
 decision-makers: Sebastien Coutu
 ---
