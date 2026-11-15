@@ -70,11 +70,11 @@ async def test_list_profiles_returns_print_profiles_for_a_listed_printer(install
     assert profiles.print_profiles
 
 
-def test_inspect_model_reports_size_volume_and_fit_for_a_cube_on_a_large_bed(cube_stl):
+async def test_inspect_model_reports_size_volume_and_fit_for_a_cube_on_a_large_bed(cube_stl):
     # Given a 20 mm cube and a 180 mm build volume
 
     # When the model is inspected against that volume
-    info = server.inspect_model(str(cube_stl), bed_width=180, bed_depth=180, max_height=180)
+    info = await server.inspect_model(str(cube_stl), bed_width=180, bed_depth=180, max_height=180)
 
     # Then it is watertight, fits, and has the cube's size and volume
     assert info.watertight
@@ -83,11 +83,11 @@ def test_inspect_model_reports_size_volume_and_fit_for_a_cube_on_a_large_bed(cub
     assert info.volume_mm3 == pytest.approx(8000)
 
 
-def test_inspect_model_reports_a_cube_as_not_fitting_a_tiny_bed(cube_stl):
+async def test_inspect_model_reports_a_cube_as_not_fitting_a_tiny_bed(cube_stl):
     # Given a 20 mm cube and a 10 mm build volume
 
     # When the model is inspected against that volume
-    info = server.inspect_model(str(cube_stl), bed_width=10, bed_depth=10, max_height=10)
+    info = await server.inspect_model(str(cube_stl), bed_width=10, bed_depth=10, max_height=10)
 
     # Then it is reported as not fitting
     assert info.fits_bed is False

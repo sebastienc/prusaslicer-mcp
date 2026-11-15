@@ -396,7 +396,7 @@ class ModelInfo(BaseModel):
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def inspect_model(
+async def inspect_model(
     model_path: Annotated[str, Field(description="Absolute path to an STL/3MF/OBJ file")],
     bed_width: Annotated[float | None, Field(description="Bed X size in mm, to check fit")] = None,
     bed_depth: Annotated[float | None, Field(description="Bed Y size in mm, to check fit")] = None,
@@ -476,7 +476,7 @@ PreviewView = Literal["iso", "front", "side", "top", "sheet"]
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def preview_model(
+async def preview_model(
     model_path: Annotated[str, Field(description="Absolute path to an STL/3MF/OBJ file")],
     view: Annotated[
         PreviewView,
