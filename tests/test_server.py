@@ -307,6 +307,34 @@ async def test_a_tilted_base_is_refused_as_stored_and_prints_a_whole_first_layer
     assert first > 0.7 * second
 
 
+async def test_measuring_a_cone_on_its_apex_shows_what_the_support_really_costs(tmp_path, installed):
+    # Given a flat cone exported apex down, so as stored it rests on a point
+    mesh = trimesh.creation.cone(radius=20, height=10, sections=48)
+    mesh.apply_transform(trimesh.transformations.rotation_matrix(np.pi, [1, 0, 0]))
+    model = tmp_path / "cone.stl"
+    mesh.export(model)
+
+    # When orientations are suggested with real profiles, so each is sliced with supports on
+    advice = await server.suggest_orientation(
+        str(model),
+        count=3,
+        printer_profile=installed.printer,
+        print_profile=installed.print_profile,
+        material_profile=installed.filament,
+    )
+
+    # Then the best option, base down, printed with no support at all, and the as-stored one cost more or was refused
+    best = advice.options[0]
+    assert best.measured is not None
+    assert best.measured.refused is None
+    assert best.measured.support_g == pytest.approx(0.0, abs=0.05)
+    assert (best.measured.filament_g or 0) > 0
+    assert best.measured.estimated_time_seconds
+    stored = next(option for option in advice.options if option.as_stored)
+    assert stored.measured is not None
+    assert stored.measured.refused or (stored.measured.support_g or 0) > 1.0
+
+
 def recorded_setting(result, key: str) -> str:
     """The value PrusaSlicer wrote for `key` in the config dump at the end of the G-code."""
     for line in reversed(Path(result.gcode_path).read_text().splitlines()):
