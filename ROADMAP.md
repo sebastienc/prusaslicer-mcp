@@ -14,6 +14,7 @@ When an item ships, move it to **Done** and update the README and architecture d
 - Scans with a missing face: `inspect_model` counts open holes and says which are flat gaps, and `slice_model(close_holes=true)` caps them in a temporary copy so a base-less scan slices, with a flat base even where the rim is ragged ([ADR 0014](docs/decisions/0014-cap-flat-holes-on-request.md), [ADR 0017](docs/decisions/0017-close-a-hole-with-a-flat-base.md)). The two scans in the library that PrusaSlicer refused (the statue stood head-up, and `grimpeux-scan-1` rotated) now slice.
 - Plain 3MF files are centred on the bed by default, with `center` as an override and `centered` in the result ([ADR 0013](docs/decisions/0013-centre-plain-3mf-files-automatically.md)).
 - `preview_model` takes the transforms and `close_holes`, and draws the model as PrusaSlicer will transform it by asking PrusaSlicer itself, so an orientation or a capped base can be checked before a slice ([ADR 0015](docs/decisions/0015-preview-transforms-by-asking-prusaslicer.md)). On the statue it shows the open base as stored and a solid bust once rotated and capped.
+- `suggest_orientation` ranks the ways to stand a model (flat faces, axes, as stored) by bed contact, overhang and height, with the `rotate_x`/`rotate_y` for each, and found the statue's 16 degree tilt. Checked against real supports on one model, and over the whole library with no errors ([ADR 0018](docs/decisions/0018-suggest-orientations-from-geometry.md)).
 - STEP files work in `inspect_model` and `preview_model`, converted by PrusaSlicer's `--export-stl` ([ADR 0016](docs/decisions/0016-read-step-files-through-prusaslicer.md)).
 - `preview_model` and `preview_gcode` return PNGs so Claude can see a model and what was sliced, drawn with numpy and Pillow ([ADR 0011](docs/decisions/0011-render-previews-with-numpy-and-pillow.md)).
 
@@ -48,6 +49,9 @@ Nothing is queued. Pick from **Later**. After a change to slicing, previewing, i
 - **Failed slices leave an empty output folder.** It is created before PrusaSlicer runs. Remove it when the slice fails and the server created it.
 - **Validate overrides earlier.** A bad key or value already fails with PrusaSlicer's own readable message (`Unknown option --fill-densty`, `Invalid value supplied for --fill-density`). What remains is failing before PrusaSlicer starts, and suggesting the closest valid key from `--help-fff`.
 
+- **Better orientation scores.** Overhang area ordered two of three statue orientations wrongly against real support filament (ADR 0018). Try the actual support volume from a slice, bridging, and a candidate at an arbitrary angle for curved models; recheck the 10% tie rule on more models.
+- **Orientation for projects.** `suggest_orientation` refuses a PrusaSlicer project because its own placement does not combine with the rotations as scored.
+
 ### Ideas
 
 - **Richer G-code analysis:** silent-mode time, first-layer time, time and filament per feature type, per-layer stats.
@@ -55,7 +59,7 @@ Nothing is queued. Pick from **Later**. After a change to slicing, previewing, i
 - **Project details:** report a project's per-object settings and plate layout, and possibly write a project back. (Slicing a project as saved is done, ADR 0007.)
 - **Multi-material and multi-extruder slicing** (multiple filament profiles, tool changes). Needs a check of how the 2.9.x CLI takes several `--material-profile` values.
 - **SLA (resin) support.** `list_printers` already accepts `SLA`; slicing and statistics differ (layer images, different footer).
-- **Ideas from PrusaMCP** ([ADR 0004](docs/decisions/0004-build-our-own-server.md)): orientation scoring, printability checks (thin walls, bridges, overhangs). Port with attribution; it is MIT.
+- **Ideas from PrusaMCP** ([ADR 0004](docs/decisions/0004-build-our-own-server.md)): printability checks (thin walls, bridges). Port with attribution; it is MIT.
 - **Binary G-code:** a reader or `convert_gcode` tool so output can match the printer profile again ([ADR 0005](docs/decisions/0005-always-slice-to-text-gcode.md)).
 - **Packaging:** make it installable and runnable with `uvx` for easier client setup.
 
