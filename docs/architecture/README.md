@@ -44,8 +44,8 @@ src/prusaslicer_mcp/
 scripts/dogfood/     opt-in sweep that runs every tool over a folder of real models (docs/dogfooding.md)
 tests/               unit tests (no PrusaSlicer) plus a few integration tests; see Testing below
 .github/
-  workflows/ci.yml             lint, types, audit, unit (3.12, 3.14), integration (macOS), commitlint
-  workflows/release-please.yml release pull request from Conventional Commits
+  workflows/ci.yml             lint, types, audit, unit (3.12-3.14), lowest dependency versions, package build, integration (macOS), commitlint
+  workflows/release-please.yml release pull request from Conventional Commits; on release, build and publish to PyPI
   scripts/setup-prusaslicer-macos.sh   installs PrusaSlicer and a throwaway data directory for CI
 ```
 
@@ -162,14 +162,14 @@ crashes, timeouts, refusals, warnings and suspicious results ([docs/dogfooding.m
 | Integration | a real PrusaSlicer; marked `integration` automatically when a test uses the `prusaslicer` fixture, and skipped when no install is found | `tests/test_server.py` |
 
 CI (`.github/workflows/ci.yml`) runs these jobs: lint and format, type check (`ty` via `uv check`, pinned, then pyright; [ADR 0010](../decisions/0010-pin-ty-and-add-pyright.md)), dependency audit, unit tests on
-Python 3.12 and 3.14 with a 95% coverage floor, integration tests on macOS, and commitlint, then a final `ci` job that depends on all of them and fails unless each one succeeded. Branch protection requires that one `ci` check (GitHub names checks after jobs, not workflows), so adding or renaming a job never breaks the ruleset; a new job must be added to the `ci` job's `needs`. The integration job
+Python 3.12, 3.13 and 3.14 with a 95% coverage floor, the unit tests again with every direct dependency at its lowest allowed version (so the declared lower bounds are true), a package job that builds the wheel and sdist, installs the wheel in a clean environment and runs `twine check --strict`, integration tests on macOS, and commitlint, then a final `ci` job that depends on all of them and fails unless each one succeeded. Branch protection requires that one `ci` check (GitHub names checks after jobs, not workflows), so adding or renaming a job never breaks the ruleset; a new job must be added to the `ci` job's `needs`. The integration job
 installs the official 2.9.7 `.dmg` (cached by version, `PRUSASLICER_VERSION` in the workflow) and builds a
 throwaway data directory from the profiles inside the app. Linux is not covered because Prusa no longer attaches Linux
 builds to its GitHub releases.
 
 ## Releases
 
-Release Please (`.github/workflows/release-please.yml`, [ADR 0008](../decisions/0008-conventional-commits-and-release-please.md)) reads the Conventional Commits on `main` and keeps a release pull request open. Merging it tags `prusaslicer-mcp-vX.Y.Z`, publishes a GitHub release, writes `CHANGELOG.md`, and bumps the version in `pyproject.toml`, `uv.lock` and `.release-please-manifest.json`. Nothing is published to PyPI.
+Release Please (`.github/workflows/release-please.yml`, [ADR 0008](../decisions/0008-conventional-commits-and-release-please.md)) reads the Conventional Commits on `main` and keeps a release pull request open. Merging it tags `prusaslicer-mcp-vX.Y.Z`, publishes a GitHub release, writes `CHANGELOG.md`, and bumps the version in `pyproject.toml`, `uv.lock` and `.release-please-manifest.json`. In the same workflow run, a `build` job (read-only) builds the sdist and wheel from the tag and a `publish` job uploads them to PyPI with trusted publishing (OpenID Connect, no stored token) inside the `pypi` environment ([ADR 0020](../decisions/0020-open-source-and-publish-to-pypi.md)). Publishing is a job of this workflow, not a separate `on: release` one, because a release made with the default `GITHUB_TOKEN` does not trigger other workflows.
 
 Only `feat`, `fix`, `perf` and `revert` commits appear in the notes and can trigger a release; every other type is hidden, and Release Please skips a release whose notes would be empty. Before 1.0 a `feat` bumps the minor version and a `fix` the patch.
 

@@ -6,6 +6,10 @@ When an item ships, move it to **Done** and update the README and architecture d
 
 ## Done
 
+### Project
+
+- Open source under the MIT licence and published to PyPI as `prusaslicer-mcp` through trusted publishing from the release workflow, with contributing and security policies and a CI job that builds and installs the package ([ADR 0020](docs/decisions/0020-open-source-and-publish-to-pypi.md)).
+
 ### Tools
 
 - The core tools `list_printers`, `list_profiles`, `inspect_model` and `slice_model`, wrapping the PrusaSlicer 2.9.x command line ([ADR 0002](docs/decisions/0002-wrap-the-prusaslicer-2-9-cli.md)), with G-code statistics: time, filament length, volume and weight summed across extruders, cost and layers.

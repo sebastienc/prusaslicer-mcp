@@ -1,0 +1,30 @@
+name: Bug report
+description: Something did not work, or a slice came out wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: The tool you called, with its arguments, and the `warnings` or error it returned.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: prusaslicer-mcp version
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: input
+    id: slicer
+    attributes:
+      label: PrusaSlicer version and operating system
+      placeholder: "2.9.7 on macOS 15"
+    validations:
+      required: true
+  - type: textarea
+    id: model
+    attributes:
+      label: The model
+      description: Attach it if you can share it; otherwise describe it (format, size, where it came from). Remove anything private.
