@@ -114,9 +114,9 @@ _STATIC_HINTS = (
     (
         re.compile(r"no extrusions in the first layer", re.IGNORECASE),
         " (hint: the model's lowest layer has nothing to print, usually because its underside is open, as in many "
-        "scans, or it rests on a point. Look at it with preview_model, which takes rotate_x, rotate_y and "
-        "close_holes too, so an orientation can be tried without slicing, to put a flat, closed face down. If "
-        "inspect_model reports a hole that can be closed, repair the mesh with close_holes=true)",
+        "scans, or it rests on a point. suggest_orientation ranks the ways to stand it, and preview_model, which "
+        "takes rotate_x, rotate_y and close_holes too, shows one without slicing, to put a flat, closed face down. "
+        "If inspect_model reports a hole that can be closed, repair the mesh with close_holes=true)",
     ),
     (
         re.compile(r"wipe tower is currently not supported for multimaterial sequential", re.IGNORECASE),
@@ -657,8 +657,9 @@ async def suggest_orientation(
     listed, with its rank). Each is scored by the surface it puts on the bed (`base_area_mm2`, and `stable` unless that
     is under 5% of the model's silhouette from above), the surface leaning past 45 degrees that would need support
     (`overhang_area_mm2`) and the height. Pass the `rotate_x` and `rotate_y` of an option to preview_model to look
-    at it and to slice_model to print it. The scores are geometry only: they know nothing about strength, how it looks
-    or the material, so use them to choose, not to decide."""
+    at it and to slice_model to print it. Overhang area is a rough guide to how much support is needed, not a
+    measure: orientations within about 10% of each other are effectively tied. The scores are geometry only: they know
+    nothing about strength, how it looks or the material, so use them to choose, not to decide."""
     path = _model_path(model_path)
     if read_project(path) is not None:
         raise ToolError(

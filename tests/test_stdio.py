@@ -246,3 +246,15 @@ async def test_the_rotations_are_described_once_the_same_way_for_slicing_and_pre
 
     # Then they are the same text, so the two cannot drift apart
     assert sliced == previewed
+
+
+async def test_suggest_orientation_warns_that_close_scores_are_ties_and_what_it_cannot_know(tools):
+    # Given the tools a client received
+
+    # When the description of suggest_orientation is read
+    description = tools["suggest_orientation"].description or ""
+
+    # Then it says near-equal overhang is a tie (it is a rough guide to support, not a measure) and that the
+    # scores are geometry only
+    assert "within about 10%" in description
+    assert "geometry only" in description
