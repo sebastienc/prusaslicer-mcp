@@ -69,7 +69,7 @@ def _picture(content: list[Image | str]) -> bytes:
 
 
 def _inspect(path: Path, setup: Setup) -> dict[str, Any]:
-    info = server.inspect_model(str(path), setup.bed_width, setup.bed_depth, setup.max_height)
+    info = asyncio.run(server.inspect_model(str(path), setup.bed_width, setup.bed_depth, setup.max_height))
     return {
         "triangles": info.triangles,
         "size": [round(value, 1) for value in info.size_mm],
@@ -82,7 +82,7 @@ def _inspect(path: Path, setup: Setup) -> dict[str, Any]:
 
 
 def _preview_model(path: Path, out_dir: Path) -> dict[str, Any]:
-    (out_dir / "model.png").write_bytes(_picture(server.preview_model(str(path), "sheet", _PICTURE_SIZE)))
+    (out_dir / "model.png").write_bytes(_picture(asyncio.run(server.preview_model(str(path), "sheet", _PICTURE_SIZE))))
     return {}
 
 

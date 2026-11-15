@@ -25,12 +25,12 @@ def save(mesh, path):
 # --------------------------------------------------------------------------- what a healthy model reports
 
 
-def test_a_clean_cube_is_reported_in_full(tmp_path):
+async def test_a_clean_cube_is_reported_in_full(tmp_path):
     # Given a closed 20 mm cube in an STL
     model = save(cube(20, at=(10, 10, 10)), tmp_path / "cube.stl")
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then size, bounds, volume, area and counts are all reported, with no warnings
     assert info.triangles == 12
@@ -43,12 +43,12 @@ def test_a_clean_cube_is_reported_in_full(tmp_path):
     assert info.warnings == []
 
 
-def test_fit_is_not_judged_without_a_bed(tmp_path):
+async def test_fit_is_not_judged_without_a_bed(tmp_path):
     # Given a cube and no bed dimensions
     model = save(cube(), tmp_path / "cube.stl")
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then fits_bed stays undecided
     assert info.fits_bed is None
@@ -57,23 +57,23 @@ def test_fit_is_not_judged_without_a_bed(tmp_path):
 @pytest.mark.parametrize(
     "given", [{"bed_width": 180}, {"bed_width": 180, "bed_depth": 180}], ids=["width-only", "no-height"]
 )
-def test_fit_is_not_judged_with_an_incomplete_bed(tmp_path, given):
+async def test_fit_is_not_judged_with_an_incomplete_bed(tmp_path, given):
     # Given a cube and only some of the three bed dimensions
     model = save(cube(), tmp_path / "cube.stl")
 
     # When it is inspected
-    info = server.inspect_model(str(model), **given)
+    info = await server.inspect_model(str(model), **given)
 
     # Then fits_bed stays undecided instead of guessing
     assert info.fits_bed is None
 
 
-def test_a_model_exactly_the_size_of_the_bed_fits(tmp_path):
+async def test_a_model_exactly_the_size_of_the_bed_fits(tmp_path):
     # Given a 20 mm cube and a 20 mm build volume
     model = save(cube(20), tmp_path / "cube.stl")
 
     # When it is inspected against that volume
-    info = server.inspect_model(str(model), bed_width=20, bed_depth=20, max_height=20)
+    info = await server.inspect_model(str(model), bed_width=20, bed_depth=20, max_height=20)
 
     # Then the boundary case fits
     assert info.fits_bed is True
@@ -88,25 +88,25 @@ def test_a_model_exactly_the_size_of_the_bed_fits(tmp_path):
     ],
     ids=["too-wide", "too-deep", "too-tall"],
 )
-def test_a_model_too_large_in_one_axis_does_not_fit_and_is_explained(tmp_path, bed):
+async def test_a_model_too_large_in_one_axis_does_not_fit_and_is_explained(tmp_path, bed):
     # Given a 20 mm cube and a build volume that is too small in exactly one axis
     model = save(cube(20), tmp_path / "cube.stl")
 
     # When it is inspected against that volume
-    info = server.inspect_model(str(model), **bed)
+    info = await server.inspect_model(str(model), **bed)
 
     # Then it does not fit, and a warning says so
     assert info.fits_bed is False
     assert any("exceeds the build volume" in w for w in info.warnings)
 
 
-def test_fit_check_does_not_try_rotating_the_model(tmp_path):
+async def test_fit_check_does_not_try_rotating_the_model(tmp_path):
     # Given a 30 x 10 x 10 mm bar and a 20 x 40 x 40 mm build volume it would fit if turned
     bar = trimesh.creation.box(extents=(30, 10, 10))
     model = save(bar, tmp_path / "bar.stl")
 
     # When it is inspected against that volume
-    info = server.inspect_model(str(model), bed_width=20, bed_depth=40, max_height=40)
+    info = await server.inspect_model(str(model), bed_width=20, bed_depth=40, max_height=40)
 
     # Then it is reported as not fitting, and the warning says rotation was not considered
     assert info.fits_bed is False
@@ -116,14 +116,14 @@ def test_fit_check_does_not_try_rotating_the_model(tmp_path):
 # --------------------------------------------------------------------------- mesh health warnings
 
 
-def test_an_open_mesh_has_no_volume_and_warns_it_may_need_repair(tmp_path):
+async def test_an_open_mesh_has_no_volume_and_warns_it_may_need_repair(tmp_path):
     # Given a cube with one triangle missing, so the surface has a hole
     box = cube()
     holed = trimesh.Trimesh(vertices=box.vertices, faces=box.faces[:-1], process=False)
     model = save(holed, tmp_path / "holed.stl")
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then it is not watertight, volume is unknown, and the warning mentions repair
     assert info.watertight is False
@@ -137,12 +137,12 @@ def open_cylinder():
     return trimesh.Trimesh(full.vertices, full.faces[full.face_normals[:, 2] > -0.99])
 
 
-def test_a_missing_base_is_reported_as_a_hole_that_can_be_closed(tmp_path):
+async def test_a_missing_base_is_reported_as_a_hole_that_can_be_closed(tmp_path):
     # Given a cylinder with no bottom
     model = save(open_cylinder(), tmp_path / "scan.stl")
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then one hole is counted, it is closable, and a warning names close_holes as the way out
     assert (info.open_holes, info.closable_holes) == (1, 1)
@@ -150,32 +150,32 @@ def test_a_missing_base_is_reported_as_a_hole_that_can_be_closed(tmp_path):
     assert "stay open" not in warning
 
 
-def test_a_tiny_gap_is_counted_but_not_offered_for_closing(tmp_path):
+async def test_a_tiny_gap_is_counted_but_not_offered_for_closing(tmp_path):
     # Given a cube with one triangle missing
     box = cube()
     holed = trimesh.Trimesh(vertices=box.vertices, faces=box.faces[:-1], process=False)
     model = save(holed, tmp_path / "holed.stl")
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then the gap is counted but not closable, and nothing suggests close_holes
     assert (info.open_holes, info.closable_holes) == (1, 0)
     assert not any("close_holes" in w for w in info.warnings)
 
 
-def test_a_closed_mesh_has_no_holes(tmp_path):
+async def test_a_closed_mesh_has_no_holes(tmp_path):
     # Given a closed cube
     model = save(cube(), tmp_path / "cube.stl")
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then no holes are counted
     assert (info.open_holes, info.closable_holes) == (0, 0)
 
 
-def test_a_closed_mesh_with_a_flipped_face_warns_about_winding(tmp_path):
+async def test_a_closed_mesh_with_a_flipped_face_warns_about_winding(tmp_path):
     # Given a closed cube where one triangle is wound the wrong way
     box = cube()
     faces = box.faces.copy()
@@ -184,7 +184,7 @@ def test_a_closed_mesh_with_a_flipped_face_warns_about_winding(tmp_path):
     model = save(flipped, tmp_path / "flipped.stl")
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then only the winding problem is reported, not a hole
     assert info.watertight is True
@@ -192,27 +192,27 @@ def test_a_closed_mesh_with_a_flipped_face_warns_about_winding(tmp_path):
     assert not any("not watertight" in w for w in info.warnings)
 
 
-def test_two_separate_solids_are_counted_as_two_parts(tmp_path):
+async def test_two_separate_solids_are_counted_as_two_parts(tmp_path):
     # Given two cubes far apart in one STL
     both = trimesh.util.concatenate([cube(at=(0, 0, 0)), cube(at=(100, 0, 0))])
     model = save(both, tmp_path / "two.stl")
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then two parts are counted and the warning says so
     assert info.connected_parts == 2
     assert any("2 disconnected parts" in w for w in info.warnings)
 
 
-def test_a_3mf_with_several_objects_is_inspected_as_one_model(tmp_path):
+async def test_a_3mf_with_several_objects_is_inspected_as_one_model(tmp_path):
     # Given a 3MF holding two cubes as separate objects
     scene = trimesh.Scene({"a": cube(at=(0, 0, 0)), "b": cube(at=(100, 0, 0))})
     model = tmp_path / "two.3mf"
     scene.export(model)
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then both objects are counted together
     assert info.triangles == 24
@@ -222,43 +222,43 @@ def test_a_3mf_with_several_objects_is_inspected_as_one_model(tmp_path):
 # --------------------------------------------------------------------------- files that cannot be inspected
 
 
-def test_an_unsupported_file_type_is_refused_naming_the_supported_ones(tmp_path):
+async def test_an_unsupported_file_type_is_refused_naming_the_supported_ones(tmp_path):
     # Given a text file
     model = tmp_path / "notes.txt"
     model.write_text("hello")
 
     # When / Then it is refused, listing what is supported
     with pytest.raises(ToolError, match=r"Unsupported model type '\.txt'.*\.stl"):
-        server.inspect_model(str(model))
+        await server.inspect_model(str(model))
 
 
-def test_file_type_is_matched_case_insensitively(tmp_path):
+async def test_file_type_is_matched_case_insensitively(tmp_path):
     # Given a valid STL whose extension is upper case
     model = save(cube(), tmp_path / "cube.stl")
     upper = model.rename(tmp_path / "CUBE.STL")
 
     # When it is inspected
-    info = server.inspect_model(str(upper))
+    info = await server.inspect_model(str(upper))
 
     # Then it is accepted
     assert info.triangles == 12
 
 
-def test_a_directory_is_not_a_model_file(tmp_path):
+async def test_a_directory_is_not_a_model_file(tmp_path):
     # Given a path that is a directory
 
     # When / Then it is reported as not found
     with pytest.raises(ToolError, match="Model file not found"):
-        server.inspect_model(str(tmp_path))
+        await server.inspect_model(str(tmp_path))
 
 
-def test_a_model_path_may_start_with_a_tilde(tmp_path, monkeypatch):
+async def test_a_model_path_may_start_with_a_tilde(tmp_path, monkeypatch):
     # Given a model in the home directory and a path written with "~"
     monkeypatch.setenv("HOME", str(tmp_path))
     save(cube(), tmp_path / "cube.stl")
 
     # When it is inspected
-    info = server.inspect_model("~/cube.stl")
+    info = await server.inspect_model("~/cube.stl")
 
     # Then the home directory is substituted
     assert info.triangles == 12
@@ -266,25 +266,25 @@ def test_a_model_path_may_start_with_a_tilde(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("suffix", [".stl", ".3mf", ".obj", ".step", ".stp", ".amf"])
 @pytest.mark.parametrize("content", [b"", b"this is not a mesh"], ids=["empty", "garbage"])
-def test_an_unreadable_model_of_any_supported_type_fails_readably(tmp_path, suffix, content):
+async def test_an_unreadable_model_of_any_supported_type_fails_readably(tmp_path, suffix, content):
     # Given a file with a supported extension whose content is empty or garbage
     model = tmp_path / f"broken{suffix}"
     model.write_bytes(content)
 
     # When / Then the tool fails with a message the client can read, not an opaque crash
     with pytest.raises(ToolError, match="Could not"):
-        server.inspect_model(str(model))
+        await server.inspect_model(str(model))
 
 
 # --------------------------------------------------------------------------- PrusaSlicer projects
 
 
-def test_a_project_3mf_reports_the_profiles_and_settings_saved_in_it(make_3mf):
+async def test_a_project_3mf_reports_the_profiles_and_settings_saved_in_it(make_3mf):
     # Given a 3MF saved from PrusaSlicer with supports and a brim switched on
     model = make_3mf(config=PROJECT_CONFIG)
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then the stored profile names and the settings that shape a print are reported
     assert info.project is not None
@@ -296,18 +296,18 @@ def test_a_project_3mf_reports_the_profiles_and_settings_saved_in_it(make_3mf):
 
 
 @pytest.mark.parametrize("kind", ["plain-3mf", "stl"])
-def test_a_model_that_is_not_a_project_reports_no_project(make_3mf, tmp_path, kind):
+async def test_a_model_that_is_not_a_project_reports_no_project(make_3mf, tmp_path, kind):
     # Given a plain 3MF, or an STL
     model = make_3mf(config=None) if kind == "plain-3mf" else save(cube(), tmp_path / "cube.stl")
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then no project settings are reported
     assert info.project is None
 
 
-def test_the_warning_says_which_holes_stay_open_when_only_some_can_be_closed(tmp_path):
+async def test_the_warning_says_which_holes_stay_open_when_only_some_can_be_closed(tmp_path):
     # Given a cylinder with no bottom that also has one triangle missing from its side: a flat gap and a tiny one
     scan = open_cylinder()
     on_top = scan.face_normals[:, 2] > 0.99
@@ -315,7 +315,7 @@ def test_the_warning_says_which_holes_stay_open_when_only_some_can_be_closed(tmp
     model = save(pierced, tmp_path / "scan.stl")
 
     # When it is inspected
-    info = server.inspect_model(str(model))
+    info = await server.inspect_model(str(model))
 
     # Then the counts differ, and the warning says the other hole stays open
     assert info.open_holes > info.closable_holes >= 1
