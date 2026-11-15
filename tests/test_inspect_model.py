@@ -1,5 +1,6 @@
 """Unit tests for inspect_model (real meshes built with trimesh; no PrusaSlicer needed)."""
 
+import numpy as np
 import pytest
 import trimesh
 from conftest import PROJECT_CONFIG
@@ -128,6 +129,50 @@ def test_an_open_mesh_has_no_volume_and_warns_it_may_need_repair(tmp_path):
     assert info.watertight is False
     assert info.volume_mm3 is None
     assert any("not watertight" in w for w in info.warnings)
+
+
+def open_cylinder():
+    """A cylinder with no bottom: a solid whose base is a hole, like a scan that never captured its underside."""
+    full = trimesh.creation.cylinder(radius=10, height=30, sections=48)
+    return trimesh.Trimesh(full.vertices, full.faces[full.face_normals[:, 2] > -0.99])
+
+
+def test_a_missing_base_is_reported_as_a_hole_that_can_be_closed(tmp_path):
+    # Given a cylinder with no bottom
+    model = save(open_cylinder(), tmp_path / "scan.stl")
+
+    # When it is inspected
+    info = server.inspect_model(str(model))
+
+    # Then one hole is counted, it is closable, and a warning names close_holes as the way out
+    assert (info.open_holes, info.closable_holes) == (1, 1)
+    warning = next(w for w in info.warnings if "close_holes" in w)
+    assert "stay open" not in warning
+
+
+def test_a_tiny_gap_is_counted_but_not_offered_for_closing(tmp_path):
+    # Given a cube with one triangle missing
+    box = cube()
+    holed = trimesh.Trimesh(vertices=box.vertices, faces=box.faces[:-1], process=False)
+    model = save(holed, tmp_path / "holed.stl")
+
+    # When it is inspected
+    info = server.inspect_model(str(model))
+
+    # Then the gap is counted but not closable, and nothing suggests close_holes
+    assert (info.open_holes, info.closable_holes) == (1, 0)
+    assert not any("close_holes" in w for w in info.warnings)
+
+
+def test_a_closed_mesh_has_no_holes(tmp_path):
+    # Given a closed cube
+    model = save(cube(), tmp_path / "cube.stl")
+
+    # When it is inspected
+    info = server.inspect_model(str(model))
+
+    # Then no holes are counted
+    assert (info.open_holes, info.closable_holes) == (0, 0)
 
 
 def test_a_closed_mesh_with_a_flipped_face_warns_about_winding(tmp_path):
@@ -260,3 +305,19 @@ def test_a_model_that_is_not_a_project_reports_no_project(make_3mf, tmp_path, ki
 
     # Then no project settings are reported
     assert info.project is None
+
+
+def test_the_warning_says_which_holes_stay_open_when_only_some_can_be_closed(tmp_path):
+    # Given a cylinder with no bottom that also has one triangle missing from its side: a flat gap and a tiny one
+    scan = open_cylinder()
+    on_top = scan.face_normals[:, 2] > 0.99
+    pierced = trimesh.Trimesh(scan.vertices, scan.faces[~(on_top & (np.cumsum(on_top) == 1))], process=False)
+    model = save(pierced, tmp_path / "scan.stl")
+
+    # When it is inspected
+    info = server.inspect_model(str(model))
+
+    # Then the counts differ, and the warning says the other hole stays open
+    assert info.open_holes > info.closable_holes >= 1
+    warning = next(w for w in info.warnings if "close_holes" in w)
+    assert "stay open" in warning

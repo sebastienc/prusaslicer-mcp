@@ -150,6 +150,24 @@ async def test_slice_places_a_plain_3mf_around_the_origin_when_centered(origin_c
     assert result.stats.layer_count
 
 
+async def test_a_scan_with_no_base_slices_to_its_full_height_once_the_hole_is_closed(tmp_path, installed):
+    # Given a 30 mm tall cylinder with no bottom, the shape of a scan whose underside was never captured
+    full = trimesh.creation.cylinder(radius=10, height=30, sections=48)
+    scan = tmp_path / "scan.stl"
+    trimesh.Trimesh(full.vertices, full.faces[full.face_normals[:, 2] > -0.99]).export(scan)
+    before = scan.read_bytes()
+
+    # When it is sliced with close_holes
+    result = await server.slice_model(
+        str(scan), installed.printer, installed.print_profile, installed.filament, close_holes=True
+    )
+
+    # Then PrusaSlicer accepts the capped copy, prints all 30 mm, and the result says a hole was closed
+    assert result.holes_closed == 1
+    assert max(scan_gcode(Path(result.gcode_path)).layer_heights) == pytest.approx(30, abs=0.3)
+    assert scan.read_bytes() == before  # the model file itself is not rewritten
+
+
 def recorded_setting(result, key: str) -> str:
     """The value PrusaSlicer wrote for `key` in the config dump at the end of the G-code."""
     for line in reversed(Path(result.gcode_path).read_text().splitlines()):

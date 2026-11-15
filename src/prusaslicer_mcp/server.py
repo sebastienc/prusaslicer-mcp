@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
@@ -15,7 +16,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from . import cli
+from . import cli, repair
 from .config import Config, ConfigError, load_config
 from .gcode import GcodeStats, layer_gap_warning, parse_gcode_stats
 from .preview_gcode import render_layer, render_profile, scan_gcode
@@ -88,7 +89,8 @@ _STATIC_HINTS = (
         re.compile(r"no extrusions in the first layer", re.IGNORECASE),
         " (hint: the model's lowest layer has nothing to print, usually because its underside is open, as in many "
         "scans, or it rests on a point. Look at it with preview_model, then try rotate_x or rotate_y to put a flat, "
-        "closed face down, or repair the mesh)",
+        "closed face down. If inspect_model reports a hole that can be closed, repair the mesh with "
+        "close_holes=true)",
     ),
     (
         re.compile(r"wipe tower is currently not supported for multimaterial sequential", re.IGNORECASE),
@@ -164,6 +166,23 @@ def _load_mesh(path: Path) -> trimesh.Trimesh:
     if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
         raise ToolError("Could not load a triangle mesh from this file.")
     return mesh
+
+
+def _close_holes_of(path: Path) -> repair.Closing:
+    return repair.close_holes(_load_mesh(path))
+
+
+def _closing_warning(closing: repair.Closing) -> str:
+    """What close_holes did, so a result never hides that the sliced mesh was not the file."""
+    if closing.closed:
+        rest = f"; {closing.left_open} other open hole(s) were left as they are" if closing.left_open else ""
+        return f"close_holes capped {closing.closed} flat hole(s) in a copy of the model before slicing{rest}."
+    if closing.left_open:
+        return (
+            f"close_holes could not close any of the {closing.left_open} open hole(s): they are tiny, bent or touch "
+            "themselves. The model was sliced as it is."
+        )
+    return "close_holes found no open holes, so the model was sliced as it is."
 
 
 def _transform_args(
@@ -368,6 +387,8 @@ class ModelInfo(BaseModel):
     volume_mm3: float | None
     surface_area_mm2: float
     watertight: bool
+    open_holes: int
+    closable_holes: int
     connected_parts: int
     fits_bed: bool | None = None
     project: ProjectInfo | None = None
@@ -388,8 +409,20 @@ def inspect_model(
 
     size = tuple(float(x) for x in mesh.extents)
     warnings: list[str] = []
+    holes = [] if mesh.is_watertight else repair.find_holes(mesh)
+    closable = sum(hole.closable for hole in holes)
     if not mesh.is_watertight:
         warnings.append("Mesh is not watertight (holes or non-manifold edges); PrusaSlicer may need to repair it.")
+    if closable:
+        stay = (
+            f" The other {len(holes) - closable} (small, bent or part of an open shell) would stay open."
+            if closable < len(holes)
+            else ""
+        )
+        warnings.append(
+            f"{closable} of the {len(holes)} open hole(s) are flat gaps, such as a missing base: slice_model can "
+            f"cap them with close_holes=true.{stay}"
+        )
     elif not mesh.is_winding_consistent:
         warnings.append("Face winding is inconsistent.")
     parts = len(mesh.split(only_watertight=False))
@@ -430,6 +463,8 @@ def inspect_model(
         volume_mm3=float(mesh.volume) if mesh.is_watertight else None,
         surface_area_mm2=float(mesh.area),
         watertight=bool(mesh.is_watertight),
+        open_holes=len(holes),
+        closable_holes=closable,
         connected_parts=parts,
         fits_bed=fits,
         project=project,
@@ -540,6 +575,7 @@ class SliceResult(BaseModel):
     stats: GcodeStats
     settings_from: Literal["profiles", "project"]
     centered: bool
+    holes_closed: int = 0
     warnings: list[str]
 
 
@@ -625,6 +661,16 @@ async def slice_model(
             description="Total number of objects to print, arranged automatically on the bed (3 prints three of this model).",
         ),
     ] = None,
+    close_holes: Annotated[
+        bool,
+        Field(
+            description="Cap flat holes in the mesh before slicing, such as the missing base of a scan, which "
+            "PrusaSlicer otherwise refuses with 'no extrusions in the first layer'. inspect_model says whether a model "
+            "has such holes. Only simple, nearly flat holes are closed; bent holes, tiny gaps and open shells are left "
+            "alone. PrusaSlicer slices a repaired copy in a temporary folder, so the model file is never changed. Not "
+            "for PrusaSlicer projects, which would lose their saved settings."
+        ),
+    ] = False,
 ) -> SliceResult:
     """Slice a model headlessly and return the G-code path plus print time, filament use and layer count.
     Uses the given installed profiles, or, for a PrusaSlicer project 3MF with no profiles given, the settings
@@ -650,6 +696,16 @@ async def slice_model(
     else:
         out = cfg.output_dir / f"{model.stem}.gcode"
         create_all_parents = True
+
+    closing: repair.Closing | None = None
+    if close_holes:
+        if project is not None:
+            raise ToolError(
+                "close_holes cannot be used with a PrusaSlicer project: slicing a repaired copy would drop its saved "
+                "settings. Repair the mesh in PrusaSlicer, or slice the model as a plain STL with profiles."
+            )
+        # A large scan takes seconds to load and cap, so keep that off the event loop.
+        closing = await asyncio.to_thread(_close_holes_of, model)
 
     args = ["--export-gcode", "--binary-gcode=0"]
     if profiles is not None:
@@ -691,7 +747,14 @@ async def slice_model(
     # be reported as this slice's result, and a failed slice must not destroy the previous file either.
     with scratch as scratch_dir:
         scratch_out = Path(scratch_dir) / out.name
-        result = await _run(cfg, [*args, "--output", str(scratch_out), str(model)])
+        slicing = model
+        if closing is not None and closing.closed:
+            slicing = Path(scratch_dir) / f"{model.stem}.stl"  # named like the model, so PrusaSlicer's messages are
+            try:
+                await asyncio.to_thread(closing.mesh.export, slicing)
+            except OSError as e:
+                raise ToolError(f"Cannot write the repaired copy of the model: {e}") from e
+        result = await _run(cfg, [*args, "--output", str(scratch_out), str(slicing)])
         if result.returncode != 0 or not scratch_out.is_file():
             detail = (result.stderr.strip() or result.stdout.strip())[-2000:]
             bed_printer = profiles[0] if profiles is not None else (project.printer_profile if project else None)
@@ -702,7 +765,7 @@ async def slice_model(
         except OSError as e:
             raise ToolError(f"Cannot write {out}: {e}") from e
 
-    warnings = parse_warnings(result.stdout)
+    warnings = ([_closing_warning(closing)] if closing is not None else []) + parse_warnings(result.stdout)
     try:
         stats = parse_gcode_stats(out)
     except ValueError as e:
@@ -716,6 +779,7 @@ async def slice_model(
         stats=stats,
         settings_from="profiles" if profiles is not None else "project",
         centered=centered,
+        holes_closed=closing.closed if closing is not None else 0,
         warnings=warnings,
     )
 

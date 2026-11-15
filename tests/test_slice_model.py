@@ -4,12 +4,14 @@ Only `cli.run` is faked, so argument building, validation, output paths, warning
 failure reporting are the real code under test.
 """
 
+import io
 import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import trimesh
 from conftest import PROJECT_CONFIG
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -51,6 +53,7 @@ def fake_prusaslicer(tmp_path, monkeypatch):
         Config(executable=tmp_path / "PrusaSlicer", datadir=None, output_dir=tmp_path / "out", timeout=5),
     )
     calls: list[list[str]] = []
+    inputs: list[bytes | None] = []  # the model file as PrusaSlicer was given it (scratch copies are gone afterwards)
     state = SimpleNamespace(gcode=FOOTER.encode(), writes_output=True, returncode=0, stdout="", stderr="")
 
     async def fake_run(config, args, timeout=None):
@@ -58,12 +61,14 @@ def fake_prusaslicer(tmp_path, monkeypatch):
             Path(args[args.index("-o") + 1]).write_text(json.dumps(PRINTERS))
             return cli.CliResult(1, "", "")
         calls.append(args)
+        given = Path(args[-1])
+        inputs.append(given.read_bytes() if given.is_file() else None)
         if state.writes_output:
             Path(args[args.index("--output") + 1]).write_bytes(state.gcode)
         return cli.CliResult(state.returncode, state.stdout, state.stderr)
 
     monkeypatch.setattr(cli, "run", fake_run)
-    return SimpleNamespace(calls=calls, state=state, out_dir=tmp_path / "out", tmp=tmp_path)
+    return SimpleNamespace(calls=calls, inputs=inputs, state=state, out_dir=tmp_path / "out", tmp=tmp_path)
 
 
 @pytest.fixture
@@ -981,6 +986,7 @@ async def test_an_empty_first_layer_points_to_the_preview_and_to_rotating(fake_p
     assert "preview_model" in message
     assert "rotate_x" in message
     assert "repair" in message
+    assert "close_holes" in message
 
 
 async def test_the_wipe_tower_conflict_names_the_override_that_fixes_it(fake_prusaslicer, make_3mf):
@@ -1175,3 +1181,134 @@ async def test_a_refused_3mf_that_was_centred_automatically_is_not_told_to_centr
     # Then telling the caller to centre it would be wrong, since that already happened
     assert "center=true" not in message
     assert message.endswith(OUTSIDE)
+
+
+# --------------------------------------------------------------------------- closing holes before slicing
+
+
+@pytest.fixture
+def open_scan(tmp_path):
+    """A 20 x 30 mm cylinder with no bottom, like a scan whose underside was never captured."""
+    full = trimesh.creation.cylinder(radius=10, height=30, sections=48)
+    path = tmp_path / "scan.stl"
+    trimesh.Trimesh(full.vertices, full.faces[full.face_normals[:, 2] > -0.99]).export(path)
+    return path
+
+
+def given_to_prusaslicer(fake):
+    mesh = trimesh.load(io.BytesIO(fake.inputs[0]), file_type="stl")
+    assert isinstance(mesh, trimesh.Trimesh)
+    return mesh
+
+
+async def test_close_holes_slices_a_capped_copy_named_like_the_model(fake_prusaslicer, open_scan):
+    # Given a scan with no base
+    # When it is sliced with close_holes
+    result = await slice_it(open_scan, close_holes=True)
+
+    # Then PrusaSlicer is given a different, watertight file that keeps the model's name, and the result counts the cap
+    given = Path(fake_prusaslicer.calls[0][-1])
+    assert given != open_scan.resolve()
+    assert given.name == "scan.stl"
+    assert given_to_prusaslicer(fake_prusaslicer).is_watertight
+    assert result.holes_closed == 1
+    assert any("capped 1" in warning for warning in result.warnings)
+
+
+async def test_close_holes_leaves_the_original_file_and_no_working_files(fake_prusaslicer, open_scan):
+    # Given a scan with no base and its bytes
+    before = open_scan.read_bytes()
+
+    # When it is sliced with close_holes
+    await slice_it(open_scan, close_holes=True)
+
+    # Then the original is unchanged and only the G-code is left in the output folder
+    assert open_scan.read_bytes() == before
+    assert leftovers(fake_prusaslicer.out_dir) == ["scan.gcode"]
+
+
+async def test_holes_are_not_touched_unless_asked(fake_prusaslicer, open_scan):
+    # Given a scan with no base
+
+    # When it is sliced without close_holes
+    result = await slice_it(open_scan)
+
+    # Then PrusaSlicer gets the original file and nothing is reported as closed
+    assert fake_prusaslicer.calls[0][-1] == str(open_scan.resolve())
+    assert result.holes_closed == 0
+
+
+async def test_close_holes_on_a_closed_model_slices_it_as_it_is_and_says_so(fake_prusaslicer, tmp_path):
+    # Given a closed cube
+    cube = tmp_path / "cube.stl"
+    trimesh.creation.box(extents=(20, 20, 20)).export(cube)
+
+    # When it is sliced with close_holes
+    result = await slice_it(cube, close_holes=True)
+
+    # Then the original is sliced and a warning says there was nothing to close
+    assert fake_prusaslicer.calls[0][-1] == str(cube.resolve())
+    assert result.holes_closed == 0
+    assert any("no open holes" in warning for warning in result.warnings)
+
+
+async def test_a_hole_that_cannot_be_capped_is_reported_and_the_model_sliced_as_it_is(fake_prusaslicer, tmp_path):
+    # Given a cube with one triangle missing: a gap too small to cap
+    box = trimesh.creation.box(extents=(20, 20, 20))
+    gap = tmp_path / "gap.stl"
+    trimesh.Trimesh(box.vertices, box.faces[:-1], process=False).export(gap)
+
+    # When it is sliced with close_holes
+    result = await slice_it(gap, close_holes=True)
+
+    # Then the original is sliced, and the warning says the hole could not be closed
+    assert fake_prusaslicer.calls[0][-1] == str(gap.resolve())
+    assert result.holes_closed == 0
+    assert any("could not close" in warning for warning in result.warnings)
+
+
+async def test_close_holes_is_refused_for_a_project_and_nothing_is_created(fake_prusaslicer, make_3mf):
+    # Given a PrusaSlicer project, which carries settings a repaired copy would lose
+    project = make_3mf(config=PROJECT_CONFIG)
+
+    # When it is sliced with close_holes
+    with pytest.raises(ToolError) as error:
+        await slice_it(project, NO_PROFILES, close_holes=True)
+
+    # Then it is refused with the reason, and PrusaSlicer is not run and no folder is made
+    assert "project" in str(error.value)
+    assert fake_prusaslicer.calls == []
+    assert not fake_prusaslicer.out_dir.exists()
+
+
+async def test_close_holes_on_an_unreadable_model_fails_readably_and_creates_nothing(fake_prusaslicer, tmp_path):
+    # Given a file with an STL name that is not a mesh
+    broken = tmp_path / "broken.stl"
+    broken.write_text("not a mesh")
+
+    # When it is sliced with close_holes
+    with pytest.raises(ToolError) as error:
+        await slice_it(broken, close_holes=True)
+
+    # Then it is called unreadable, PrusaSlicer is not run and no folder is made
+    assert "Could not load a triangle mesh" in str(error.value)
+    assert fake_prusaslicer.calls == []
+    assert not fake_prusaslicer.out_dir.exists()
+
+
+async def test_a_capped_plain_3mf_is_still_centred_on_the_bed(fake_prusaslicer, tmp_path):
+    # Given a plain 3MF whose model has no base, stored away from the bed's centre
+    full = trimesh.creation.cylinder(radius=10, height=30, sections=48)
+    scan = trimesh.Trimesh(full.vertices, full.faces[full.face_normals[:, 2] > -0.99])
+    scan.apply_translation([5, 5, 15])
+    model = tmp_path / "scan.3mf"
+    scan.export(model)
+
+    # When it is sliced with close_holes and no center option, on a 250 x 210 mm bed
+    result = await slice_it(model, profiles=MK3S_PROFILES, close_holes=True)
+
+    # Then the capped copy is centred as a plain 3MF would be
+    args = fake_prusaslicer.calls[0]
+    assert args[args.index("--center") + 1] == "125,105"
+    assert result.centered is True
+    assert result.holes_closed == 1
