@@ -15,10 +15,8 @@ _MAC_GLOBS = [
     "~/Applications/PrusaSlicer.app/Contents/MacOS/PrusaSlicer",
     "~/Applications/*/PrusaSlicer.app/Contents/MacOS/PrusaSlicer",
 ]
-_WIN_GLOBS = [
-    r"C:\Program Files\Prusa3D\PrusaSlicer\prusa-slicer-console.exe",
-    r"C:\Program Files (x86)\Prusa3D\PrusaSlicer\prusa-slicer-console.exe",
-]
+_WIN_GUI = "prusa-slicer.exe"  # the GUI build: on Windows it writes nothing to stdout, so a tool cannot use it
+_WIN_CONSOLE = "prusa-slicer-console.exe"
 _PATH_NAMES = ["prusa-slicer", "PrusaSlicer", "prusa-slicer-console"]
 
 
@@ -42,21 +40,46 @@ def _is_executable(p: Path) -> bool:
     return p.is_file() and os.access(p, os.X_OK)
 
 
+def _windows_globs() -> list[str]:
+    """Where the Windows installer puts PrusaSlicer, from the environment rather than a hardcoded C: drive."""
+    patterns: list[str] = []
+    roots = (os.environ.get(name) for name in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"))
+    for root in dict.fromkeys(r for r in roots if r):  # the first two are usually the same folder
+        base = glob.escape(root)
+        patterns += [
+            os.path.join(base, "Prusa3D", "PrusaSlicer*", _WIN_CONSOLE),
+            os.path.join(base, "PrusaSlicer*", _WIN_CONSOLE),
+        ]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        patterns.append(os.path.join(glob.escape(local), "Programs", "PrusaSlicer*", _WIN_CONSOLE))
+    return patterns
+
+
+def _prefer_console(p: Path) -> Path:
+    """The console build next to a Windows GUI build, whose output (warnings, errors) would otherwise be lost."""
+    if p.name.lower() == _WIN_GUI:
+        console = p.with_name(_WIN_CONSOLE)
+        if _is_executable(console):
+            return console
+    return p
+
+
 def find_executable() -> Path:
     """Resolve the PrusaSlicer binary: env override, PATH, then known install locations."""
     env = os.environ.get("PRUSASLICER_PATH")
     if env:
         p = Path(env).expanduser()
         if _is_executable(p):
-            return p
+            return _prefer_console(p)
         raise PrusaSlicerNotFound(f"PRUSASLICER_PATH is set but not an executable file: {p}")
 
     for name in _PATH_NAMES:
         found = shutil.which(name)
         if found:
-            return Path(found)
+            return _prefer_console(Path(found))
 
-    patterns = _MAC_GLOBS if sys.platform == "darwin" else _WIN_GLOBS if sys.platform == "win32" else []
+    patterns = _MAC_GLOBS if sys.platform == "darwin" else _windows_globs() if sys.platform == "win32" else []
     for pattern in patterns:
         for match in sorted(glob.glob(os.path.expanduser(pattern))):
             if _is_executable(Path(match)):
