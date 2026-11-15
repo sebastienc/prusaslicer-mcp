@@ -6,7 +6,9 @@ from types import SimpleNamespace
 import pytest
 import trimesh
 from conftest import PROJECT_CONFIG
+from mcp.server.mcpserver import Image
 from mcp.server.mcpserver.exceptions import ToolError
+from step_builders import step_cube
 
 from prusaslicer_mcp import server
 from prusaslicer_mcp.preview_gcode import scan_gcode
@@ -166,6 +168,63 @@ async def test_a_scan_with_no_base_slices_to_its_full_height_once_the_hole_is_cl
     assert result.holes_closed == 1
     assert max(scan_gcode(Path(result.gcode_path)).layer_heights) == pytest.approx(30, abs=0.3)
     assert scan.read_bytes() == before  # the model file itself is not rewritten
+
+
+@pytest.fixture
+def step_cube_file(tmp_path):
+    """A 20 mm cube as a STEP file, which trimesh cannot read."""
+    path = tmp_path / "cube.step"
+    path.write_text(step_cube(20))
+    return path
+
+
+async def test_inspect_model_measures_a_step_file_through_prusaslicer(step_cube_file):
+    # Given a STEP cube, a format trimesh cannot read
+
+    # When it is inspected
+    info = await server.inspect_model(str(step_cube_file))
+
+    # Then PrusaSlicer's conversion gives its real size and volume
+    assert info.size_mm == pytest.approx((20, 20, 20), abs=0.01)
+    assert info.volume_mm3 == pytest.approx(8000, rel=1e-3)
+    assert info.watertight is True
+
+
+async def test_preview_model_draws_a_step_file(step_cube_file):
+    # Given a STEP cube
+
+    # When it is previewed
+    content = await server.preview_model(str(step_cube_file), "iso", 256)
+
+    # Then there is a picture, and the caption gives the converted size
+    assert any(isinstance(item, Image) and item.data for item in content)
+    assert any(isinstance(item, str) and "20.0 x 20.0 x 20.0" in item for item in content)
+
+
+async def test_a_step_file_slices(step_cube_file, installed):
+    # Given a STEP cube and installed profiles
+
+    # When it is sliced
+    result = await server.slice_model(
+        str(step_cube_file), installed.printer, installed.print_profile, installed.filament
+    )
+
+    # Then it prints
+    assert result.stats.layer_count
+
+
+async def test_a_broken_step_file_fails_with_a_message_that_says_what_to_check(tmp_path):
+    # Given a file with a STEP name and no STEP content
+    broken = tmp_path / "broken.step"
+    broken.write_text("this is not a STEP file")
+
+    # When it is inspected
+    with pytest.raises(ToolError) as error:
+        await server.inspect_model(str(broken))
+
+    # Then the message names the file and the likely cause
+    assert "could not convert broken.step" in str(error.value)
+    assert "valid STEP file" in str(error.value)
 
 
 def recorded_setting(result, key: str) -> str:
