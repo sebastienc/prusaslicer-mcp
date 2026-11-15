@@ -37,6 +37,31 @@ mcp = MCPServer(
 
 _READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 
+# The transforms are the same for slice_model and preview_model, so each is described once (ADR 0012, 0015).
+_RotateX = Annotated[
+    float | None,
+    Field(
+        description="Degrees to rotate about the X axis. PrusaSlicer applies rotations in the fixed order X, then Y, "
+        "then Z, whatever order you think of them. 90 or -90 stands a model that lies along Y upright, e.g. a Y-up "
+        "scan (check with preview_model first). Exactly +-90 about Y combined with a Z rotation can come out "
+        "differently from that order: preview_model shows what PrusaSlicer really does."
+    ),
+]
+_RotateY = Annotated[float | None, Field(description="Degrees to rotate about the Y axis (applied after rotate_x).")]
+_RotateZ = Annotated[float | None, Field(description="Degrees to rotate about the vertical Z axis (applied last).")]
+_Scale = Annotated[
+    float | None,
+    Field(gt=0, description="Scale factor: 0.5 is half size, 2 is double. Not a percentage. Not with scale_to_fit."),
+]
+_ScaleToFit = Annotated[
+    list[float] | None,
+    Field(
+        min_length=3,
+        max_length=3,
+        description="[x, y, z] in mm: scale the model uniformly to fit inside this box, e.g. the bed size. Not with scale.",
+    ),
+]
+
 _MODEL_SUFFIXES = {".stl", ".3mf", ".obj", ".amf", ".step", ".stp"}
 _STEP_SUFFIXES = {".step", ".stp"}
 _GCODE_SUFFIXES = {".gcode", ".gco"}
@@ -89,9 +114,9 @@ _STATIC_HINTS = (
     (
         re.compile(r"no extrusions in the first layer", re.IGNORECASE),
         " (hint: the model's lowest layer has nothing to print, usually because its underside is open, as in many "
-        "scans, or it rests on a point. Look at it with preview_model, then try rotate_x or rotate_y to put a flat, "
-        "closed face down. If inspect_model reports a hole that can be closed, repair the mesh with "
-        "close_holes=true)",
+        "scans, or it rests on a point. Look at it with preview_model, which takes rotate_x, rotate_y and "
+        "close_holes too, so an orientation can be tried without slicing, to put a flat, closed face down. If "
+        "inspect_model reports a hole that can be closed, repair the mesh with close_holes=true)",
     ),
     (
         re.compile(r"wipe tower is currently not supported for multimaterial sequential", re.IGNORECASE),
@@ -181,10 +206,8 @@ async def _export_mesh(source: Path, flags: list[str]) -> trimesh.Trimesh:
         result = await _run(cfg, ["--export-stl", *flags, "--output", str(target), str(source)])
         if result.returncode != 0 or not target.is_file():
             detail = (result.stderr.strip() or result.stdout.strip() or "no message")[-1000:]
-            raise ToolError(
-                f"PrusaSlicer could not convert {source.name} to a mesh (is it a valid STEP file, or a model PrusaSlicer "
-                f"can read?): {detail}"
-            )
+            what = "a valid STEP file" if source.suffix.lower() in _STEP_SUFFIXES else "a model PrusaSlicer can read"
+            raise ToolError(f"PrusaSlicer could not convert {source.name} to a mesh (is it {what}?): {detail}")
         return await asyncio.to_thread(_load_mesh, target)
 
 
@@ -195,17 +218,18 @@ async def _load_model_mesh(path: Path) -> trimesh.Trimesh:
     return await asyncio.to_thread(_load_mesh, path)
 
 
-def _closing_warning(closing: repair.Closing) -> str:
-    """What close_holes did, so a result never hides that the sliced mesh was not the file."""
+def _closing_note(closing: repair.Closing, doing: Literal["slicing", "drawing"]) -> str:
+    """What close_holes did, so a result never hides that the mesh used was not the file."""
+    used = "sliced" if doing == "slicing" else "drawn"
     if closing.closed:
         rest = f"; {closing.left_open} other open hole(s) were left as they are" if closing.left_open else ""
-        return f"close_holes capped {closing.closed} flat hole(s) in a copy of the model before slicing{rest}."
+        return f"close_holes capped {closing.closed} flat hole(s) in a copy of the model before {doing}{rest}."
     if closing.left_open:
         return (
             f"close_holes could not close any of the {closing.left_open} open hole(s): they are tiny, bent or touch "
-            "themselves. The model was sliced as it is."
+            f"themselves. The model was {used} as it is."
         )
-    return "close_holes found no open holes, so the model was sliced as it is."
+    return f"close_holes found no open holes, so the model was {used} as it is."
 
 
 def _transform_args(
@@ -498,24 +522,74 @@ async def inspect_model(
 PreviewView = Literal["iso", "front", "side", "top", "sheet"]
 
 
+def _applied_transforms(
+    rotate_x: float | None,
+    rotate_y: float | None,
+    rotate_z: float | None,
+    scale: float | None,
+    scale_to_fit: list[float] | None,
+) -> list[str]:
+    """The transforms that were asked for, as the caller wrote them, for a caption."""
+    named = (("rotate_x", rotate_x), ("rotate_y", rotate_y), ("rotate_z", rotate_z), ("scale", scale))
+    applied = [f"{name}={value:g}" for name, value in named if value is not None]
+    if scale_to_fit is not None:
+        applied.append("scale_to_fit=[" + ", ".join(f"{size:g}" for size in scale_to_fit) + "]")
+    return applied
+
+
 @mcp.tool(annotations=_READ_ONLY)
 async def preview_model(
-    model_path: Annotated[str, Field(description="Absolute path to an STL/3MF/OBJ file")],
+    model_path: Annotated[str, Field(description="Absolute path to an STL/3MF/OBJ/STEP file")],
     view: Annotated[
         PreviewView,
         Field(
             description="iso (default), front, side or top; sheet puts all four in one picture. Z is up, and the model "
-            "is drawn as stored, centred."
+            "is drawn centred, as stored unless you give transforms."
         ),
     ] = "iso",
     size: Annotated[int, Field(description="Picture width and height in pixels", ge=128, le=1024)] = 640,
+    rotate_x: _RotateX = None,
+    rotate_y: _RotateY = None,
+    rotate_z: _RotateZ = None,
+    scale: _Scale = None,
+    scale_to_fit: _ScaleToFit = None,
+    close_holes: Annotated[
+        bool,
+        Field(
+            description="Draw the model with its flat holes capped, as slice_model(close_holes=true) would slice it: "
+            "see what the base of a scan looks like once closed. Not for PrusaSlicer projects."
+        ),
+    ] = False,
 ) -> list[Image | str]:
     """Draw a picture of a model, to check its shape and which way up it is before slicing.
 
-    Returns a PNG and a caption with its size. PrusaSlicer prints with z up too, so a model that looks to be
-    lying on its side will be printed that way (scans are often Y-up)."""
+    With rotate_*, scale or scale_to_fit it draws the model as PrusaSlicer will transform it, by asking PrusaSlicer
+    itself, so an orientation can be checked before spending a slice on it. Returns a PNG and a caption with its
+    size. PrusaSlicer prints with z up too, so a model that looks to be lying on its side will be printed that way
+    (scans are often Y-up)."""
     path = _model_path(model_path)
-    mesh = await _load_model_mesh(path)
+    flags = _transform_args(rotate_x, rotate_y, rotate_z, scale, scale_to_fit, False, None)
+    if close_holes and read_project(path) is not None:
+        raise ToolError(
+            "close_holes cannot be used with a PrusaSlicer project: a repaired copy would not keep its saved settings."
+        )
+
+    notes: list[str] = []
+    mesh: trimesh.Trimesh | None = None
+    with tempfile.TemporaryDirectory(prefix="prusaslicer-mcp-") as folder:
+        source = path
+        if close_holes:
+            closing = await asyncio.to_thread(repair.close_holes, await _load_model_mesh(path))
+            notes.append(_closing_note(closing, "drawing"))
+            mesh = closing.mesh
+            if closing.closed and flags:
+                source = Path(folder) / f"{path.stem}.stl"  # named like the model, as in slice_model
+                await asyncio.to_thread(closing.mesh.export, source)
+        if flags:
+            mesh = await _export_mesh(source, flags)
+        elif mesh is None:
+            mesh = await _load_model_mesh(path)
+
     try:
         picture = render_model(mesh, view, size)
     except ValueError as e:
@@ -526,10 +600,15 @@ async def preview_model(
         if view == "sheet"
         else f"{view} view"
     )
-    caption = (
-        f"{path.name}, {where}. Size {x:.1f} x {y:.1f} x {z:.1f} mm (x, y, z). Z is up and the model is drawn as "
-        "stored, centred. PrusaSlicer also prints with z up, so a model that looks to be lying on its side would be "
-        "printed that way."
+    applied = _applied_transforms(rotate_x, rotate_y, rotate_z, scale, scale_to_fit)
+    how = f"after {', '.join(applied)}, as PrusaSlicer will apply them" if applied else "as stored"
+    caption = " ".join(
+        [
+            f"{path.name}, {where}. Size {x:.1f} x {y:.1f} x {z:.1f} mm (x, y, z). Z is up and the model is drawn "
+            f"{how}, centred. PrusaSlicer also prints with z up, so a model that looks to be lying on its side would "
+            "be printed that way.",
+            *notes,
+        ]
     )
     return [Image(data=to_png(picture), format="png"), caption]
 
@@ -641,34 +720,11 @@ async def slice_model(
             "centred."
         ),
     ] = None,
-    rotate_x: Annotated[
-        float | None,
-        Field(
-            description="Degrees to rotate about the X axis. PrusaSlicer applies rotations in the fixed order X, then Y, "
-            "then Z, whatever order you think of them. 90 or -90 stands a model that lies along Y upright, e.g. a Y-up "
-            "scan (check with preview_model first)."
-        ),
-    ] = None,
-    rotate_y: Annotated[
-        float | None, Field(description="Degrees to rotate about the Y axis (applied after rotate_x).")
-    ] = None,
-    rotate_z: Annotated[
-        float | None, Field(description="Degrees to rotate about the vertical Z axis (applied last).")
-    ] = None,
-    scale: Annotated[
-        float | None,
-        Field(
-            gt=0, description="Scale factor: 0.5 is half size, 2 is double. Not a percentage. Not with scale_to_fit."
-        ),
-    ] = None,
-    scale_to_fit: Annotated[
-        list[float] | None,
-        Field(
-            min_length=3,
-            max_length=3,
-            description="[x, y, z] in mm: scale the model uniformly to fit inside this box, e.g. the bed size. Not with scale.",
-        ),
-    ] = None,
+    rotate_x: _RotateX = None,
+    rotate_y: _RotateY = None,
+    rotate_z: _RotateZ = None,
+    scale: _Scale = None,
+    scale_to_fit: _ScaleToFit = None,
     split: Annotated[
         bool,
         Field(
@@ -788,7 +844,7 @@ async def slice_model(
         except OSError as e:
             raise ToolError(f"Cannot write {out}: {e}") from e
 
-    warnings = ([_closing_warning(closing)] if closing is not None else []) + parse_warnings(result.stdout)
+    warnings = ([_closing_note(closing, "slicing")] if closing is not None else []) + parse_warnings(result.stdout)
     try:
         stats = parse_gcode_stats(out)
     except ValueError as e:

@@ -73,6 +73,19 @@ async def test_a_step_file_prusaslicer_cannot_read_fails_with_its_message(fake_e
     )  # PrusaSlicer's own words for a broken file can be as bare as "basic_string"
 
 
+async def test_a_conversion_that_exits_with_an_error_is_a_failure_even_if_it_wrote_a_file(fake_export, step_file):
+    # Given a PrusaSlicer that wrote a mesh but exited with an error, so the mesh may be partial
+    fake_export.state.returncode = 1
+    fake_export.state.stderr = "Error: something went wrong half way"
+
+    # When it is inspected
+    with pytest.raises(ToolError) as error:
+        await server.inspect_model(str(step_file))
+
+    # Then it is a failure with PrusaSlicer's message, not a model with a doubtful mesh
+    assert "something went wrong half way" in str(error.value)
+
+
 async def test_a_conversion_that_writes_nothing_is_a_failure_even_with_exit_zero(fake_export, step_file):
     # Given a PrusaSlicer that exits 0 without writing the mesh
     fake_export.state.writes_output = False
