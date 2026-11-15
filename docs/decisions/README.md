@@ -23,3 +23,4 @@ ADRs are append-only history: to change a decision, write a new ADR and mark the
 | [0014](0014-cap-flat-holes-on-request.md) | Cap flat holes in a mesh on request | accepted |
 | [0015](0015-preview-transforms-by-asking-prusaslicer.md) | Preview transforms by asking PrusaSlicer | accepted |
 | [0016](0016-read-step-files-through-prusaslicer.md) | Read STEP files through PrusaSlicer | accepted |
+| [0017](0017-close-a-hole-with-a-flat-base.md) | Close a hole with a flat base | accepted |

@@ -222,8 +222,13 @@ def _closing_note(closing: repair.Closing, doing: Literal["slicing", "drawing"])
     """What close_holes did, so a result never hides that the mesh used was not the file."""
     used = "sliced" if doing == "slicing" else "drawn"
     if closing.closed:
+        flat = (
+            f" (an uneven rim was extended by up to {closing.extended_mm:.1f} mm so the base is flat)"
+            if closing.extended_mm >= 0.05
+            else ""
+        )
         rest = f"; {closing.left_open} other open hole(s) were left as they are" if closing.left_open else ""
-        return f"close_holes capped {closing.closed} flat hole(s) in a copy of the model before {doing}{rest}."
+        return f"close_holes capped {closing.closed} flat hole(s) in a copy of the model before {doing}{flat}{rest}."
     if closing.left_open:
         return (
             f"close_holes could not close any of the {closing.left_open} open hole(s): they are tiny, bent or touch "

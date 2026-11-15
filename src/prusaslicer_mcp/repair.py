@@ -52,6 +52,7 @@ class Closing:
     mesh: trimesh.Trimesh
     closed: int
     left_open: int
+    extended_mm: float = 0.0  # how far the ragged rim was carried to reach a flat base, at most
 
 
 def _boundary_edges(mesh: trimesh.Trimesh) -> NDArray[np.int64]:
@@ -153,32 +154,75 @@ def _triangulate(points: NDArray[np.float64]) -> list[tuple[int, int, int]] | No
     return triangles
 
 
-def _cap(mesh: trimesh.Trimesh, loop: tuple[int, ...]) -> list[list[int]] | None:
-    """Faces that fill a loop, or None if it could not be triangulated."""
-    polygon = loop[::-1]  # a cap meets the surface from the other side, so it runs against the faces' edge direction
-    points = np.asarray(mesh.vertices)[list(polygon)]
-    centre = points.mean(axis=0)
-    plane = np.linalg.svd(points - centre, full_matrices=False)[2][:2]
-    triangles = _triangulate((points - centre) @ plane.T)
+def _flat_cap(
+    vertices: NDArray[np.float64], loop: tuple[int, ...], first_new: int
+) -> tuple[NDArray[np.float64], list[list[int]], float] | None:
+    """New points, faces and the largest drop, closing a loop with a perfectly flat base; None if it cannot.
+
+    A scan's rim is ragged, so a cap joined straight to it is bumpy and the print would start from a point. Every
+    existing vertex stays where it is: each rim point is carried outward to the plane of the outermost one, a thin
+    wall joins it to the rim, and the flat ring of carried points is what gets capped.
+    """
+    rim = vertices[list(loop)]  # in the faces' edge direction
+    centre = rim.mean(axis=0)
+    cap_order = (rim - centre)[::-1]  # the cap runs against the faces' edge direction, so it faces outward
+    normal = np.cross(cap_order, np.roll(cap_order, -1, axis=0)).sum(axis=0)
+    length = float(np.linalg.norm(normal))
+    if length == 0:
+        return None
+    normal /= length
+    height = (rim - centre) @ normal
+    drop = height.max() - height
+    flat = rim + drop[:, None] * normal
+    moved = drop > 1e-9 * max(float(np.ptp(rim, axis=0).max()), 1.0)
+    ids = np.array(loop)
+    ids[moved] = first_new + np.arange(int(moved.sum()))  # a rim point already on the plane is its own ring point
+
+    axis = np.eye(3)[int(np.argmin(np.abs(normal)))]
+    u = np.cross(normal, axis)
+    u /= np.linalg.norm(u)
+    plane = np.asarray(np.vstack([u, np.cross(normal, u)]), dtype=np.float64)
+    triangles = _triangulate((flat - flat.mean(axis=0))[::-1] @ plane.T)
     if triangles is None:
         return None
-    return [[polygon[a], polygon[b], polygon[c]] for a, b, c in triangles]
+
+    faces: list[list[int]] = []
+    count = len(loop)
+    for i in range(count):
+        a, b = loop[i], loop[(i + 1) % count]
+        flat_a, flat_b = int(ids[i]), int(ids[(i + 1) % count])
+        if flat_a != a:
+            faces.append([b, a, flat_a])
+        if flat_b != b:
+            faces.append([b, flat_a, flat_b])
+    ring = ids[::-1]
+    faces += [[int(ring[a]), int(ring[b]), int(ring[c])] for a, b, c in triangles]
+    return flat[moved], faces, float(drop.max())
 
 
 def close_holes(mesh: trimesh.Trimesh) -> Closing:
-    """Cap every closable hole. Returns a new mesh and leaves the input alone."""
+    """Cap every closable hole with a flat base. Returns a new mesh and leaves the input alone."""
     holes = find_holes(mesh)
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    extra: list[NDArray[np.float64]] = []
     new_faces: list[list[int]] = []
     left_open = 0
+    extended = 0.0
     for hole in holes:
-        faces = _cap(mesh, hole.vertices) if hole.closable and hole.vertices is not None else None
-        if faces is None:
+        first_new = len(vertices) + sum(len(points) for points in extra)
+        capped = _flat_cap(vertices, hole.vertices, first_new) if hole.closable and hole.vertices is not None else None
+        if capped is None:
             left_open += 1
-        else:
-            new_faces += faces
+            continue
+        points, faces, drop = capped
+        extra.append(points)
+        new_faces += faces
+        extended = max(extended, drop)
     if not new_faces:
         return Closing(mesh, 0, left_open)
     import trimesh  # imported here so that starting the server does not pay for it
 
-    capped = trimesh.Trimesh(mesh.vertices, np.vstack([mesh.faces, np.array(new_faces)]), process=False)
-    return Closing(capped, len(holes) - left_open, left_open)
+    capped_mesh = trimesh.Trimesh(
+        np.vstack([vertices, *extra]), np.vstack([mesh.faces, np.array(new_faces)]), process=False
+    )
+    return Closing(capped_mesh, len(holes) - left_open, left_open, extended)

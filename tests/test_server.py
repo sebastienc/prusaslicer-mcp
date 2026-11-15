@@ -228,6 +228,42 @@ async def test_a_broken_step_file_fails_with_a_message_that_says_what_to_check(t
     assert "valid STEP file" in str(error.value)
 
 
+def filament_per_layer(gcode: Path, layers: int) -> list[float]:
+    """Filament (mm) extruded in each of the first layers, arcs included. Assumes relative extrusion (M83)."""
+    totals = [0.0] * layers
+    layer = -1
+    for line in gcode.read_text(errors="replace").splitlines():
+        if line.startswith(";LAYER_CHANGE"):
+            layer += 1
+            if layer >= layers:
+                break
+        elif layer >= 0 and line.startswith(("G1", "G2", "G3")) and " E" in line:
+            amount = float(line.split(" E", 1)[1].split()[0])
+            totals[layer] += max(amount, 0.0)
+    return totals
+
+
+async def test_an_uneven_scan_base_is_closed_flat_so_the_first_layer_has_real_contact(tmp_path, installed):
+    # Given a cylinder with no bottom whose rim has every other point raised 1 mm, like a scan's ragged edge.
+    # (A cap joined straight to such a rim is bumpy: only the low points touch the bed, and the print starts from
+    # spikes. This is what happened to the real scan this was found on.)
+    full = trimesh.creation.cylinder(radius=10, height=30, sections=48)
+    vertices = full.vertices.copy()
+    rim = np.flatnonzero(vertices[:, 2] < -14.99)
+    vertices[rim[::2], 2] += 1.0
+    scan = tmp_path / "ragged.stl"
+    trimesh.Trimesh(vertices, full.faces[full.face_normals[:, 2] > -0.99], process=False).export(scan)
+
+    # When it is sliced with close_holes
+    result = await server.slice_model(
+        str(scan), installed.printer, installed.print_profile, installed.filament, close_holes=True
+    )
+
+    # Then the first layer prints as much as the second: a whole base, not a few points
+    first, second = filament_per_layer(Path(result.gcode_path), 2)
+    assert first > 0.7 * second
+
+
 def recorded_setting(result, key: str) -> str:
     """The value PrusaSlicer wrote for `key` in the config dump at the end of the G-code."""
     for line in reversed(Path(result.gcode_path).read_text().splitlines()):
