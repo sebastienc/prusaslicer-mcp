@@ -13,6 +13,8 @@ When an item ships, move it to **Done** and update the README and architecture d
 - Transforms with PrusaSlicer's own flags: `rotate_x/y/z`, `scale`, `scale_to_fit`, `split` and `copies`, also on projects ([ADR 0012](docs/decisions/0012-transform-with-prusaslicers-own-flags.md)).
 - Scans with a missing face: `inspect_model` counts open holes and says which are flat gaps, and `slice_model(close_holes=true)` caps them in a temporary copy so a base-less scan slices ([ADR 0014](docs/decisions/0014-cap-flat-holes-on-request.md)). The two scans in the library that PrusaSlicer refused (the statue stood head-up, and `grimpeux-scan-1` rotated) now slice.
 - Plain 3MF files are centred on the bed by default, with `center` as an override and `centered` in the result ([ADR 0013](docs/decisions/0013-centre-plain-3mf-files-automatically.md)).
+- `preview_model` takes the transforms and `close_holes`, and draws the model as PrusaSlicer will transform it by asking PrusaSlicer itself, so an orientation or a capped base can be checked before a slice ([ADR 0015](docs/decisions/0015-preview-transforms-by-asking-prusaslicer.md)). On the statue it shows the open base as stored and a solid bust once rotated and capped.
+- STEP files work in `inspect_model` and `preview_model`, converted by PrusaSlicer's `--export-stl` ([ADR 0016](docs/decisions/0016-read-step-files-through-prusaslicer.md)).
 - `preview_model` and `preview_gcode` return PNGs so Claude can see a model and what was sliced, drawn with numpy and Pillow ([ADR 0011](docs/decisions/0011-render-previews-with-numpy-and-pillow.md)).
 
 ### Correctness and clear errors
@@ -41,8 +43,7 @@ Nothing is queued. Pick from **Later**. After a change to slicing, previewing, i
 
 - **Multi-model plates.** `--merge` segfaults in PrusaSlicer 2.9.7, so a plate of several files needs our own plate builder (trimesh) or a fixed PrusaSlicer. `copies` and `split` cover several copies of one model and several parts in one file. See ADR 0012.
 - **Open shells and other repairs.** `close_holes` caps only a flat, simple hole. Two CAD exports are open shells with 28 to 32 non-flat loops, and ten files have non-manifold edges but no open ones; `inspect_model` counts them and nothing repairs them. Needs a look at what PrusaSlicer does with them before choosing a remedy.
-- **STEP files.** `inspect_model` cannot read STEP at all (trimesh needs `cascadio` or `gmsh`, neither installed), yet `.step`/`.stp` are accepted and PrusaSlicer slices them natively. Either skip the mesh inspection for STEP with a clear message, or add a converter.
-- **Preview with transforms.** Let `preview_model` show a model after `rotate_*` and `scale`, so an orientation can be checked before slicing.
+- **Show the bed in previews.** Draw a ground line or plane at the model's lowest point so it is obvious which face rests on the bed.
 - **Preview improvements.** Stack the two silhouette panels for wide, low prints so they use the whole picture, draw `G2`/`G3` arcs, add a perspective or shaded layer-stack view, and speed up the G-code parse for very large files.
 - **Failed slices leave an empty output folder.** It is created before PrusaSlicer runs. Remove it when the slice fails and the server created it.
 - **Validate overrides earlier.** A bad key or value already fails with PrusaSlicer's own readable message (`Unknown option --fill-densty`, `Invalid value supplied for --fill-density`). What remains is failing before PrusaSlicer starts, and suggesting the closest valid key from `--help-fff`.
