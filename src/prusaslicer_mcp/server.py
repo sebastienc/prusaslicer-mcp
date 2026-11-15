@@ -316,7 +316,9 @@ async def _query_json(args: list[str]) -> dict[str, Any]:
             detail = _with_profile_hint(result.stderr.strip() or result.stdout.strip())
             raise ToolError(f"PrusaSlicer query failed (exit {result.returncode}): {detail}")
         try:
-            return json.loads(out.read_text())
+            return json.loads(
+                out.read_text(encoding="utf-8")
+            )  # PrusaSlicer writes UTF-8; the default is a code page on Windows
         except json.JSONDecodeError as e:
             raise ToolError(f"PrusaSlicer produced invalid JSON: {e}") from e
 

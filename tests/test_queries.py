@@ -5,6 +5,10 @@ server.py are the real code under test.
 """
 
 import json
+import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -260,3 +264,36 @@ async def test_list_profiles_echoes_the_requested_printer_when_the_answer_omits_
 
     # Then the name that was asked for is echoed back
     assert profiles.printer_profile == "Asked For"
+
+
+def test_query_output_is_read_as_utf_8_whatever_the_machine_default_is(tmp_path):
+    # Given PrusaSlicer's JSON with a non-ASCII profile name, written as UTF-8 as PrusaSlicer does, and a Python
+    # whose default text encoding is ASCII (what a Windows code page is to UTF-8: not the same)
+    payload = tmp_path / "payload.json"
+    payload.write_bytes(json.dumps({"name": "Prusament PLA \u00ae Galaxy \u00e9"}, ensure_ascii=False).encode())
+    program = textwrap.dedent(
+        f"""
+        import asyncio, json, sys
+        from pathlib import Path
+        from types import SimpleNamespace
+        from prusaslicer_mcp import cli, server
+
+        server._config = SimpleNamespace()
+
+        async def fake_run(config, args, timeout=None):
+            Path(args[args.index("-o") + 1]).write_bytes(Path({str(payload)!r}).read_bytes())
+            return cli.CliResult(1, "", "")
+
+        cli.run = fake_run
+        result = asyncio.run(server._query_json(["--query-printer-models"]))
+        sys.stdout.buffer.write(json.dumps(result, ensure_ascii=True).encode())
+        """
+    )
+    env = {**os.environ, "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0", "LC_ALL": "C", "PYTHONIOENCODING": "ascii"}
+
+    # When the query result is read in that Python
+    done = subprocess.run([sys.executable, "-c", program], env=env, capture_output=True, check=False)
+
+    # Then the name arrives intact
+    assert done.returncode == 0, done.stderr.decode()
+    assert json.loads(done.stdout) == {"name": "Prusament PLA \u00ae Galaxy \u00e9"}
