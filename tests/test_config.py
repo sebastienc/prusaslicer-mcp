@@ -26,7 +26,7 @@ ENV_VARS = (
 
 
 @pytest.fixture(autouse=True)
-def machine(tmp_path, monkeypatch):
+def machine(tmp_path, monkeypatch, set_home):
     """A fake machine with nothing installed: empty home, empty PATH, install globs under tmp_path."""
     for var in ENV_VARS:
         monkeypatch.delenv(var, raising=False)
@@ -34,7 +34,7 @@ def machine(tmp_path, monkeypatch):
     path_dir = tmp_path / "bin"
     home.mkdir()
     path_dir.mkdir()
-    monkeypatch.setenv("HOME", str(home))
+    set_home(home)
     monkeypatch.setenv("PATH", str(path_dir))
     monkeypatch.setattr(
         config, "_MAC_GLOBS", [str(tmp_path / "Applications/*/PrusaSlicer.app/Contents/MacOS/PrusaSlicer")]
@@ -105,8 +105,8 @@ def test_invalid_prusaslicer_path_is_an_error_not_a_fallback(machine, monkeypatc
 
 @pytest.mark.parametrize("name", ["prusa-slicer", "PrusaSlicer", "prusa-slicer-console"])
 def test_executable_is_found_on_path(machine, name):
-    # Given no variable is set and a known executable name is on PATH
-    expected = make_file(machine.path_dir / name)
+    # Given no variable is set and a known executable name is on PATH (Windows only runs files with an extension)
+    expected = make_file(machine.path_dir / (name + (".exe" if sys.platform == "win32" else "")))
 
     # When the executable is located
     found = find_executable()
