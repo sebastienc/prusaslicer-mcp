@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2](https://github.com/sebastienc/prusaslicer-mcp/compare/prusaslicer-mcp-v0.3.1...prusaslicer-mcp-v0.3.2) (2026-11-15)
+
+
+### Bug Fixes
+
+* find windows installs and prefer the console build ([6ef1b00](https://github.com/sebastienc/prusaslicer-mcp/commit/6ef1b0094779ba4414bfe4c2103cdf38075b3a64))
+* read the query output as utf-8 ([7492b21](https://github.com/sebastienc/prusaslicer-mcp/commit/7492b219830e63184fb9dbc49e1fb5aff91993ef))
+
 ## [0.3.1](https://github.com/sebastienc/prusaslicer-mcp/compare/prusaslicer-mcp-v0.3.0...prusaslicer-mcp-v0.3.1) (2026-11-15)
 
 
