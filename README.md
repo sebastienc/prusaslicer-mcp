@@ -8,7 +8,7 @@ It runs PrusaSlicer as a separate process, so it works while the GUI is open and
 It does **not** control the GUI itself (PrusaSlicer 2.9.x has no remote-control API), and it targets
 **2.9.x only**; PrusaSlicer 3.x is not supported yet.
 
-**Status:** early. Seven tools, tested against PrusaSlicer 2.9.7 on macOS. See the [roadmap](ROADMAP.md).
+**Status:** early. Seven tools, tested against PrusaSlicer 2.9.7 on macOS and Windows. See the [roadmap](ROADMAP.md).
 
 *An independent project. It is not affiliated with, endorsed by or supported by Prusa Research. PrusaSlicer and Prusa are trademarks of Prusa Research a.s.*
 
@@ -95,6 +95,13 @@ claude mcp add prusaslicer \
 Set `PRUSASLICER_MCP_OUTPUT_DIR`: the default, `./output`, is relative to wherever the client starts the server,
 which is rarely a folder you want G-code in. `PRUSASLICER_PATH` is only needed when auto-detection fails (a
 nonstandard install folder; quote paths containing spaces). `claude mcp list` should show `prusaslicer`.
+
+**On Windows** the same commands work. Install [uv](https://docs.astral.sh/uv/) first (`winget install --id=astral-sh.uv`), and note:
+
+- Write paths with forward slashes (`C:/Users/you/prusaslicer-output`) or doubled backslashes in JSON.
+- The server looks for PrusaSlicer in `Program Files` (`Prusa3D\PrusaSlicer`) and in your `AppData\Local\Programs` folder, and uses `prusa-slicer-console.exe`: the other program, `prusa-slicer.exe`, is the GUI build and writes nothing a tool can read. If you give it the GUI one and the console one sits beside it, the console one is used. For a portable unzip anywhere else, set `PRUSASLICER_PATH`.
+- Claude Desktop keeps its configuration in `%APPDATA%\Claude\claude_desktop_config.json`.
+- CI runs the unit and integration tests on Windows against the portable PrusaSlicer 2.9.7 zip. The Windows installer's own folders are searched but have not been tried on a real installation, so if PrusaSlicer is not found, set `PRUSASLICER_PATH` and please open an issue.
 
 These are ordinary environment variables, so give them through the client's `env` setting, as above. The `.env`
 file in a clone is only a convenience for development.

@@ -8,6 +8,7 @@ When an item ships, move it to **Done** and update the README and architecture d
 
 ### Project
 
+- Windows: the lookups that differ (install folders, the console build, UTF-8 query output) are done, the process tests run on every platform, and CI runs the unit and integration tests on Windows against the real PrusaSlicer 2.9.7 (the portable zip).
 - Open source under the MIT licence and published to PyPI as `prusaslicer-mcp` through trusted publishing from the release workflow, with contributing and security policies and a CI job that builds and installs the package ([ADR 0020](docs/decisions/0020-open-source-and-publish-to-pypi.md)).
 
 ### Tools
@@ -42,7 +43,7 @@ When an item ships, move it to **Done** and update the README and architecture d
 In rough order, with the reason each is here. After a change to slicing, previewing, inspection or G-code parsing, run the dogfood sweep.
 
 1. **Speed up the G-code parse for very large files.** `preview_gcode` reads the file in plain Python in two passes (about 2 s per million extruding moves), and an arc-fitted print now expands each arc into many short moves.
-2. **Windows support.** The code has no known POSIX-only logic, and the lookups that differ (install folders, the console build, UTF-8 query output) are done and unit-tested, but nothing has run on Windows. Left: a Windows job in CI (unit tests, then integration tests against the 2.9.7 `.zip` or `-setup.exe` release asset with a throwaway data folder), a Windows-native fake slicer so the process tests there are not skipped, a README section (`%USERPROFILE%` paths, JSON backslashes, where Claude Desktop keeps its config), a safer default for the output folder than the working directory (a client on Windows may start the server somewhere unwritable), and the Windows classifier once CI is green.
+2. **Check Windows on a real installed copy.** CI runs the unit and integration tests on Windows against the portable zip and they pass, but the installer's folders (`Program Files\Prusa3D\PrusaSlicer`, per-user) are only unit-tested, and nobody has run the server from a client such as Claude Desktop on Windows. Also decide on a safer default for the output folder than the server's working directory (a client on Windows may start it somewhere unwritable): a change for every platform, so it needs its own ADR.
 3. **Make the dogfood sweep see the first layer.** The sweep reports that a slice succeeded, not that it would stick to the bed. Report each slice's first-layer filament against its second (`gcode.filament_by_feature` and the layer markers give it) and flag a first layer that is a small fraction: that would have caught the capped statue's single-point base automatically.
 4. **Calibrate the orientation scores on more models.** Geometry picked the measured winner on four of five models (ADR 0019); the miss was a pipe elbow whose as-stored orientation, flagged unstable by the 5% line, cost 9.5 g less support. Recheck the 5% stability line and the 10% tie rule, add bridging, and propose a candidate at an arbitrary angle for curved models.
 5. **Cover the defensive branches.** Coverage is 98%; the misses are paths that are meant to be rare: a loop that cannot be triangulated or has no area (`repair.py`), a G-code with a reset or arc in an unusual place (`gcode.py`), and a few more. Test them or delete them.
