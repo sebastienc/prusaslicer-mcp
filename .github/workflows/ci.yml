@@ -69,8 +69,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The supported floor (requires-python) and the version we develop on.
-        python-version: ["3.12", "3.14"]
+        # Every supported version: the floor (requires-python) up to the one we develop on.
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3
@@ -102,6 +102,50 @@ jobs:
         run: .github/scripts/setup-prusaslicer-macos.sh "$PRUSASLICER_VERSION" "$RUNNER_TEMP/prusaslicer"
       - run: uv run poe test-integration
 
+  # The published metadata promises that every dependency's lower bound works. Prove it: resolve each direct
+  # dependency to its lowest allowed version and run the unit tests (this is how `mcp>=1.2` was found to be wrong).
+  lowest:
+    name: unit tests (lowest dependency versions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: true
+      # Not `uv run`: UV_LOCKED would forbid resolving. The test tools get their real floors from the dev group.
+      - run: >
+          uv run --no-project --isolated --resolution lowest-direct --with-editable .
+          --with 'pytest>=9.2.0' --with 'pytest-asyncio>=1.5.0'
+          python -m pytest -m "not integration" -q -p no:cacheprovider
+        env:
+          UV_LOCKED: "0"
+
+  # Builds what would go to PyPI and installs it into a clean environment, so a broken package (missing metadata,
+  # a file left out of the wheel, a dependency bound that does not resolve) fails here and not on release day.
+  package:
+    name: package builds and installs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv build --out-dir "$RUNNER_TEMP/dist"
+      - name: Install the wheel somewhere that is not the checkout, and import it
+        run: |
+          uv venv "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv" "$RUNNER_TEMP"/dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/python" -I -c "import prusaslicer_mcp; print(prusaslicer_mcp.main)"
+          test -x "$RUNNER_TEMP/venv/bin/prusaslicer-mcp"
+      - name: Check the metadata PyPI will show
+        run: uvx twine check --strict "$RUNNER_TEMP"/dist/*
+
   commitlint:
     name: commit messages
     runs-on: ubuntu-latest
@@ -122,7 +166,7 @@ jobs:
   ci:
     name: ci
     if: always()
-    needs: [lint, typecheck, audit, unit, integration, commitlint]
+    needs: [lint, typecheck, audit, unit, lowest, integration, package, commitlint]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

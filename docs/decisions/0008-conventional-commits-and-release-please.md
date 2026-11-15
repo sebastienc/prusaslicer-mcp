@@ -40,7 +40,7 @@ versions and a changelog while keeping the release itself a pull request a perso
 * **Before 1.0** a `feat` bumps the minor version, a `fix` the patch, and a breaking change also the minor
   (`bump-minor-pre-major`).
 * `bootstrap-sha` marks the last commit that predates the convention, so the older free-form history is ignored.
-* **No publishing.** Release Please creates a GitHub release only; nothing goes to PyPI.
+* **No publishing.** Release Please creates a GitHub release only; nothing goes to PyPI. (Superseded in part by [ADR 0020](0020-open-source-and-publish-to-pypi.md), which adds publishing.)
 
 ### Consequences
 
