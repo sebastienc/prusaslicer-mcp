@@ -1,7 +1,9 @@
 name: release-please
 
-# Opens (and keeps up to date) a release pull request from the Conventional Commits on main. Merging it tags
-# the release and writes the changelog. Nothing is published to PyPI.
+# Opens (and keeps up to date) a release pull request from the Conventional Commits on main. Merging it tags the
+# release and writes the changelog; when that happens the jobs below build the package and publish it to PyPI
+# (ADR 0020). Publishing is a job of this workflow, not a separate `on: release` one, because a release created with
+# the default GITHUB_TOKEN does not trigger other workflows.
 on:
   push:
     branches: [main]
@@ -11,11 +13,18 @@ permissions:
   issues: write
   pull-requests: write
 
+env:
+  UV_VERSION: "0.12.9"
+
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v5
+        id: release
         with:
           # Pull requests opened with the default GITHUB_TOKEN do not trigger other workflows, so the release PR
           # would get no CI. Add a personal access token as the RELEASE_PLEASE_TOKEN secret to fix that; until
@@ -23,3 +32,49 @@ jobs:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # Builds from the release's tag, with no publishing rights, so the code that runs here cannot upload anything.
+  build:
+    name: build the distribution
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: uv build --out-dir dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # The only job that can publish. It uses PyPI trusted publishing (OpenID Connect), so there is no API token to
+  # leak, and the `pypi` environment is where a required reviewer can be added as a last manual gate.
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/prusaslicer-mcp
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - run: uv publish --trusted-publishing always dist/*
