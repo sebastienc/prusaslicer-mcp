@@ -21,6 +21,7 @@ uv run poe fix               # apply safe lint fixes, then format
 uv run poe test              # unit tests (no PrusaSlicer needed)
 uv run poe test-integration  # tests that need a real PrusaSlicer (skip when absent)
 uv run poe                   # list every task
+uv run poe dogfood run <dir> # run every tool over a folder of real models and report (opt-in, docs/dogfooding.md)
 uv run prusaslicer-mcp       # run the server on stdio
 ```
 

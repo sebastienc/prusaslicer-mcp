@@ -39,6 +39,7 @@ src/prusaslicer_mcp/
   slicer_output.py  turn PrusaSlicer's stdout into warnings
   preview_model.py  render a mesh to a picture (numpy + Pillow)
   preview_gcode.py  read toolpaths from G-code and draw a layer or a side silhouette
+scripts/dogfood/     opt-in sweep that runs every tool over a folder of real models (docs/dogfooding.md)
 tests/               unit tests (no PrusaSlicer) plus a few integration tests; see Testing below
 .github/
   workflows/ci.yml             lint, types, audit, unit (3.12, 3.14), integration (macOS), commitlint
@@ -144,6 +145,8 @@ Executable resolution order: `PRUSASLICER_PATH` → `PATH` (`prusa-slicer`, `Pru
 
 `uv run poe check` runs lint, format check, type check and the unit tests; `uv run poe test-integration` runs the
 rest. Tasks are defined once in `[tool.poe.tasks]` and CI calls the same ones ([ADR 0009](../decisions/0009-quality-gate-toolchain.md)).
+Beyond the tests, `uv run poe dogfood run <folder>` sweeps a folder of real models through every tool and reports
+crashes, timeouts, refusals, warnings and suspicious results ([docs/dogfooding.md](../dogfooding.md)); it is opt-in.
 
 | Kind | What it needs | Where |
 |---|---|---|

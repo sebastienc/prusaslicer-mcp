@@ -47,6 +47,7 @@ Every test is written as **Given / When / Then** (the same shape as a BDD scenar
 
 - Run `uv run poe check` before committing (lint, format, types, unit tests). `uv run poe test-all` also runs the integration tests.
 - **Unit vs integration.** Any test that uses the `prusaslicer` fixture is marked `integration` automatically (`tests/conftest.py`), so never give a *fake* fixture that name; `test_slice_model.py` calls its fake `fake_prusaslicer` for that reason. CI runs unit tests on Python 3.12 and 3.14 (95% coverage floor) and integration tests on macOS.
+- **Dogfood sweep** (`uv run poe dogfood run <folder>`, [docs/dogfooding.md](../../docs/dogfooding.md)): after a change to slicing, previewing, inspection or G-code parsing, and before a release, run it over a folder of real models if one is available. It is opt-in and not part of CI. Fix what it finds test-first, and keep its analysis code in `scripts/dogfood/report.py` unit-tested.
 - `tests/test_stdio.py` starts the real server and checks what a client sees (tools, annotations, schemas, descriptions, error text, that stdout carries only protocol messages). Extend it when a tool's schema or annotations change; it replaces the manual client script.
 - Unit-test pure logic (parsing, validation) with inline samples; no PrusaSlicer needed. Example: `tests/test_gcode.py`.
 - Integration tests that run the real binary go in `tests/test_server.py` and use the `prusaslicer` fixture, which **skips** when PrusaSlicer is not installed. They must never fail just because it is missing.
