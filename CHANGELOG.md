@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/sebastienc/prusaslicer-mcp/compare/prusaslicer-mcp-v0.3.0...prusaslicer-mcp-v0.3.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* draw G2/G3 arcs in preview_gcode ([77b27c4](https://github.com/sebastienc/prusaslicer-mcp/commit/77b27c4a816225d390af67aedca3e7d28e0a7556))
+
 ## [0.3.0](https://github.com/sebastienc/prusaslicer-mcp/compare/prusaslicer-mcp-v0.2.0...prusaslicer-mcp-v0.3.0) (2026-11-15)
 
 
