@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from . import cli, orientation, repair
 from .config import Config, ConfigError, load_config
-from .gcode import GcodeStats, layer_gap_warning, parse_gcode_stats
+from .gcode import GcodeStats, filament_by_feature, layer_gap_warning, parse_gcode_stats
 from .preview_gcode import render_layer, render_profile, scan_gcode
 from .preview_model import SHEET_ORDER, render_model, to_png
 from .project import ProjectInfo, read_project
@@ -618,8 +618,20 @@ async def preview_model(
     return [Image(data=to_png(picture), format="png"), caption]
 
 
+class Measurement(BaseModel):
+    """What slicing an orientation with supports on really gave. `refused` is PrusaSlicer's reason, and then the
+    numbers are empty."""
+
+    support_g: float | None = None
+    filament_g: float | None = None
+    estimated_time: str | None = None
+    estimated_time_seconds: int | None = None
+    refused: str | None = None
+
+
 class OrientationOption(BaseModel):
     rank: int
+    geometry_rank: int
     rotate_x: float
     rotate_y: float
     height_mm: float
@@ -629,12 +641,68 @@ class OrientationOption(BaseModel):
     overhang_share: float
     stable: bool
     as_stored: bool
+    measured: Measurement | None = None
 
 
 class OrientationAdvice(BaseModel):
     surface_area_mm2: float
     options: list[OrientationOption]
     warnings: list[str]
+
+
+_MAX_MEASURED_OPTIONS = 6
+
+
+async def _measure_support(
+    model: Path,
+    option: orientation.Orientation,
+    profiles: tuple[str, str, str],
+    close_holes: bool,
+) -> Measurement:
+    """Slice the model in one orientation with automatic supports and read what the slice used (ADR 0019)."""
+    with tempfile.TemporaryDirectory(prefix="prusaslicer-mcp-") as folder:
+        gcode = Path(folder) / "measure.gcode"
+        try:
+            result = await slice_model(
+                str(model),
+                *profiles,
+                overrides={"support_material": "1", "support_material_auto": "1"},
+                output_path=str(gcode),
+                rotate_x=option.rotate_x or None,
+                rotate_y=option.rotate_y or None,
+                close_holes=close_holes,
+            )
+        except ToolError as e:
+            return Measurement(refused=str(e).splitlines()[0][:300])
+        by_feature = await asyncio.to_thread(filament_by_feature, gcode)
+    total = sum(by_feature.values())
+    support = sum(amount for name, amount in by_feature.items() if name.startswith("Support material"))
+    grams = result.stats.filament_used_g
+    return Measurement(
+        support_g=round(grams * support / total, 2) if grams is not None and total > 0 else 0.0 if total == 0 else None,
+        filament_g=grams,
+        estimated_time=result.stats.estimated_time,
+        estimated_time_seconds=result.stats.estimated_time_seconds,
+    )
+
+
+def _rank_by_measurement(options: list[OrientationOption]) -> list[OrientationOption]:
+    """Refused last, then stable before unstable, then the least support and the shortest print.
+
+    The sort is stable and the options arrive in geometric order, so equal measurements keep that order.
+    """
+
+    def key(option: OrientationOption) -> tuple[bool, bool, float, int]:
+        measured = option.measured or Measurement()
+        return (
+            measured.refused is not None,
+            not option.stable,
+            measured.support_g if measured.support_g is not None else 0.0,
+            measured.estimated_time_seconds or 0,
+        )
+
+    ordered = sorted(options, key=key)
+    return [option.model_copy(update={"rank": position}) for position, option in enumerate(ordered, start=1)]
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -650,6 +718,20 @@ async def suggest_orientation(
             "be the face it stands on. Without it an open base never counts as a base."
         ),
     ] = False,
+    printer_profile: Annotated[
+        str | None,
+        Field(
+            description="Exact printer profile name, from list_printers. Give all three profiles to also slice each "
+            "option once with automatic supports and report the real support filament, filament and time (slow: one "
+            "slice per option, at most 6 options). Omit all three for the geometric scores alone."
+        ),
+    ] = None,
+    print_profile: Annotated[
+        str | None, Field(description="Exact print profile name, from list_profiles. All three profiles or none.")
+    ] = None,
+    material_profile: Annotated[
+        str | None, Field(description="Exact filament profile name, from list_profiles. All three profiles or none.")
+    ] = None,
 ) -> OrientationAdvice:
     """Suggest which way up to print a model, ranked, with what each orientation costs.
 
@@ -659,7 +741,21 @@ async def suggest_orientation(
     (`overhang_area_mm2`) and the height. Pass the `rotate_x` and `rotate_y` of an option to preview_model to look
     at it and to slice_model to print it. Overhang area is a rough guide to how much support is needed, not a
     measure: orientations within about 10% of each other are effectively tied. The scores are geometry only: they know
-    nothing about strength, how it looks or the material, so use them to choose, not to decide."""
+    nothing about strength, how it looks or the material, so use them to choose, not to decide. With profiles each
+    option is also sliced with supports on, and `measured` holds the real support filament, total filament and
+    estimated time (or why PrusaSlicer refused it); the options are then ranked stable first, then by measured
+    support, then by time, and `geometry_rank` keeps the geometric order."""
+    if (printer_profile, print_profile, material_profile).count(None) not in (0, 3):
+        raise ToolError("Give all three profiles (printer_profile, print_profile, material_profile) or none")
+    profiles = (
+        (printer_profile, print_profile, material_profile)
+        if printer_profile is not None and print_profile is not None and material_profile is not None
+        else None
+    )
+    if profiles is not None and count > _MAX_MEASURED_OPTIONS:
+        raise ToolError(
+            f"count is at most {_MAX_MEASURED_OPTIONS} when measuring supports, since each option is a slice"
+        )
     path = _model_path(model_path)
     if read_project(path) is not None:
         raise ToolError(
@@ -686,25 +782,27 @@ async def suggest_orientation(
             "No orientation rests on a real base (each stands on a point or an edge), so expect to need a brim or "
             "supports, or to cut the model flat."
         )
-    return OrientationAdvice(
-        surface_area_mm2=round(float(mesh.area), 1),
-        options=[
-            OrientationOption(
-                rank=option.rank,
-                rotate_x=round(option.rotate_x, 2),
-                rotate_y=round(option.rotate_y, 2),
-                height_mm=round(option.height_mm, 1),
-                base_area_mm2=round(option.base_area_mm2, 1),
-                base_share=round(option.base_share, 3),
-                overhang_area_mm2=round(option.overhang_area_mm2, 1),
-                overhang_share=round(option.overhang_share, 3),
-                stable=option.stable,
-                as_stored=option.as_stored,
-            )
-            for option in options
-        ],
-        warnings=warnings,
-    )
+    results = [
+        OrientationOption(
+            rank=option.rank,
+            geometry_rank=option.rank,
+            rotate_x=round(option.rotate_x, 2),
+            rotate_y=round(option.rotate_y, 2),
+            height_mm=round(option.height_mm, 1),
+            base_area_mm2=round(option.base_area_mm2, 1),
+            base_share=round(option.base_share, 3),
+            overhang_area_mm2=round(option.overhang_area_mm2, 1),
+            overhang_share=round(option.overhang_share, 3),
+            stable=option.stable,
+            as_stored=option.as_stored,
+        )
+        for option in options
+    ]
+    if profiles is not None:
+        for result, option in zip(results, options, strict=True):
+            result.measured = await _measure_support(path, option, profiles, close_holes)
+        results = _rank_by_measurement(results)
+    return OrientationAdvice(surface_area_mm2=round(float(mesh.area), 1), options=results, warnings=warnings)
 
 
 GcodeView = Literal["layer", "profile"]

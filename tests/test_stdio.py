@@ -258,3 +258,16 @@ async def test_suggest_orientation_warns_that_close_scores_are_ties_and_what_it_
     # scores are geometry only
     assert "within about 10%" in description
     assert "geometry only" in description
+
+
+async def test_suggest_orientation_takes_the_three_profiles_and_says_measuring_is_slow(tools):
+    # Given the tools a client received
+
+    # When the schema and description of suggest_orientation are read
+    schema = tools["suggest_orientation"].input_schema["properties"]
+    description = tools["suggest_orientation"].description or ""
+
+    # Then the three profile names are optional inputs, described as the way to measure real support
+    assert {"printer_profile", "print_profile", "material_profile"} <= set(schema)
+    assert "slow" in schema["printer_profile"]["description"]
+    assert "measured" in description
