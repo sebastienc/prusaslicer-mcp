@@ -987,6 +987,7 @@ async def test_an_empty_first_layer_points_to_the_preview_and_to_rotating(fake_p
     assert "rotate_x" in message
     assert "repair" in message
     assert "close_holes" in message
+    assert "without slicing" in message  # preview_model takes the same rotations, so one can be tried for free
 
 
 async def test_the_wipe_tower_conflict_names_the_override_that_fixes_it(fake_prusaslicer, make_3mf):

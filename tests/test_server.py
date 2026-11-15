@@ -3,6 +3,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import trimesh
 from conftest import PROJECT_CONFIG
@@ -11,7 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from step_builders import step_cube
 
 from prusaslicer_mcp import server
-from prusaslicer_mcp.preview_gcode import scan_gcode
+from prusaslicer_mcp.preview_gcode import iter_extrusions, scan_gcode
 
 
 @pytest.fixture(autouse=True)
@@ -319,6 +320,81 @@ async def test_rotating_about_x_stands_the_box_on_its_side(bar_stl, installed):
 
     # Then it is now 20 mm tall, so it has two thirds of the layers
     assert ratio(rotated.stats.layer_count, plain.stats.layer_count) == pytest.approx(20 / 30, abs=0.03)
+
+
+def caption_of(content) -> str:
+    return next(item for item in content if isinstance(item, str))
+
+
+async def test_a_preview_with_a_rotation_shows_the_height_the_slice_prints(bar_stl, installed):
+    # Given a 10 x 20 x 30 mm box rotated 90 degrees about X
+
+    # When it is previewed and sliced with that rotation
+    caption = caption_of(await server.preview_model(str(bar_stl), rotate_x=90.0))
+    sliced = await slice_bar(bar_stl, installed, rotate_x=90)
+
+    # Then the preview's size is the print's size: 10 x 30 wide, 20 tall
+    assert "Size 10.0 x 30.0 x 20.0" in caption
+    assert max(scan_gcode(Path(sliced.gcode_path)).layer_heights) == pytest.approx(20, abs=0.25)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "size"),
+    [
+        ({"scale": 2.0}, "20.0 x 40.0 x 60.0"),
+        ({"scale_to_fit": [100.0, 100.0, 15.0]}, "5.0 x 10.0 x 15.0"),
+        ({"rotate_z": 90.0}, "20.0 x 10.0 x 30.0"),
+    ],
+    ids=["scale", "scale to fit", "rotate z"],
+)
+async def test_a_preview_applies_the_transforms_prusaslicer_applies(bar_stl, installed, arguments, size):
+    # Given a 10 x 20 x 30 mm box
+
+    # When it is previewed with a transform
+    caption = caption_of(await server.preview_model(str(bar_stl), **arguments))
+
+    # Then the size is what PrusaSlicer makes of it
+    assert f"Size {size}" in caption
+
+
+def tripod_stl(tmp_path):
+    """Three arms of different lengths meeting at a corner, so every orientation looks different."""
+    arms = [trimesh.creation.box(extents=e) for e in ((40, 8, 8), (8, 25, 8), (8, 8, 15))]
+    for arm, shift in zip(arms, ([16, 0, 0], [0, 8.5, 0], [0, 0, 3.5]), strict=True):
+        arm.apply_translation(shift)
+    faces = np.vstack([arm.faces + sum(len(a.vertices) for a in arms[:i]) for i, arm in enumerate(arms)])
+    path = tmp_path / "tripod.stl"
+    trimesh.Trimesh(np.vstack([arm.vertices for arm in arms]), faces).export(path)
+    return path
+
+
+@pytest.mark.parametrize(
+    "rotation",
+    [{"rotate_x": 90.0}, {"rotate_y": 90.0, "rotate_z": -90.0}],
+    ids=["plain rotation", "y 90 with z -90"],
+)
+async def test_a_previews_base_is_the_slices_first_layer_even_where_prusaslicer_is_odd(tmp_path, installed, rotation):
+    # Given an asymmetric model. Rotating +-90 about Y and then about Z turns it a different way up from the
+    # fixed X, Y, Z order that the other cases follow (measured on PrusaSlicer 2.9.7), which is why the preview asks
+    # PrusaSlicer instead of working the rotation out itself.
+    model = tripod_stl(tmp_path)
+
+    # When it is previewed as PrusaSlicer transforms it, and sliced the same way
+    flags = server._transform_args(
+        rotation.get("rotate_x"), rotation.get("rotate_y"), rotation.get("rotate_z"), None, None, False, None
+    )
+    mesh = await server._export_mesh(model, flags)
+    sliced = await slice_bar(model, installed, **rotation)
+
+    # Then the footprint on the bed in the preview is the footprint of the first printed layer
+    on_bed = mesh.vertices[:, 2] <= mesh.bounds[0][2] + 0.05
+    previewed = np.ptp(mesh.vertices[on_bed][:, :2], axis=0)
+    first_layer = [m for m in iter_extrusions(Path(sliced.gcode_path)) if m.layer == 0 and m.feature != "Skirt/Brim"]
+    printed = (
+        max(max(m.x0, m.x1) for m in first_layer) - min(min(m.x0, m.x1) for m in first_layer),
+        max(max(m.y0, m.y1) for m in first_layer) - min(min(m.y0, m.y1) for m in first_layer),
+    )
+    assert printed == pytest.approx(tuple(previewed), abs=1.0)
 
 
 async def test_scale_doubles_the_height(bar_stl, installed):
