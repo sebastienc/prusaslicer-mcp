@@ -5,9 +5,7 @@ description = "MCP server that lets Claude drive the PrusaSlicer 2.9.x CLI"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [
-    { name = "Sebastien Coutu", email = "sebastien.coutu@gmail.com" }
-]
+authors = [{ name = "Sebastien Coutu" }]
 keywords = ["mcp", "model-context-protocol", "prusaslicer", "3d-printing", "slicer", "gcode", "claude"]
 classifiers = [
     "Development Status :: 4 - Beta",
