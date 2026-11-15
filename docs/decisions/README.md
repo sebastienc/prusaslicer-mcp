@@ -25,3 +25,4 @@ ADRs are append-only history: to change a decision, write a new ADR and mark the
 | [0016](0016-read-step-files-through-prusaslicer.md) | Read STEP files through PrusaSlicer | accepted |
 | [0017](0017-close-a-hole-with-a-flat-base.md) | Close a hole with a flat base | accepted |
 | [0018](0018-suggest-orientations-from-geometry.md) | Suggest orientations from geometry | accepted |
+| [0019](0019-measure-support-by-slicing-on-request.md) | Measure support by slicing, on request | accepted |

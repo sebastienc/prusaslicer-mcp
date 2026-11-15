@@ -14,7 +14,7 @@ When an item ships, move it to **Done** and update the README and architecture d
 - Scans with a missing face: `inspect_model` counts open holes and says which are flat gaps, and `slice_model(close_holes=true)` caps them in a temporary copy so a base-less scan slices, with a flat base even where the rim is ragged ([ADR 0014](docs/decisions/0014-cap-flat-holes-on-request.md), [ADR 0017](docs/decisions/0017-close-a-hole-with-a-flat-base.md)). The two scans in the library that PrusaSlicer refused (the statue stood head-up, and `grimpeux-scan-1` rotated) now slice.
 - Plain 3MF files are centred on the bed by default, with `center` as an override and `centered` in the result ([ADR 0013](docs/decisions/0013-centre-plain-3mf-files-automatically.md)).
 - `preview_model` takes the transforms and `close_holes`, and draws the model as PrusaSlicer will transform it by asking PrusaSlicer itself, so an orientation or a capped base can be checked before a slice ([ADR 0015](docs/decisions/0015-preview-transforms-by-asking-prusaslicer.md)). On the statue it shows the open base as stored and a solid bust once rotated and capped.
-- `suggest_orientation` ranks the ways to stand a model (flat faces, axes, as stored) by bed contact, overhang and height, with the `rotate_x`/`rotate_y` for each, and found the statue's 16 degree tilt. Checked against real supports on one model, and over the whole library with no errors ([ADR 0018](docs/decisions/0018-suggest-orientations-from-geometry.md)).
+- `suggest_orientation` ranks the ways to stand a model (flat faces, axes, as stored) by bed contact, overhang and height, with the `rotate_x`/`rotate_y` for each, and found the statue's 16 degree tilt. With profiles it also slices each option with supports and reports the real support filament, filament and time ([ADR 0019](docs/decisions/0019-measure-support-by-slicing-on-request.md)); on five models the geometric winner was the measured winner on four. Checked against real supports on one model, and over the whole library with no errors ([ADR 0018](docs/decisions/0018-suggest-orientations-from-geometry.md)).
 - STEP files work in `inspect_model` and `preview_model`, converted by PrusaSlicer's `--export-stl` ([ADR 0016](docs/decisions/0016-read-step-files-through-prusaslicer.md)).
 - `preview_model` and `preview_gcode` return PNGs so Claude can see a model and what was sliced, drawn with numpy and Pillow ([ADR 0011](docs/decisions/0011-render-previews-with-numpy-and-pillow.md)).
 
@@ -44,17 +44,16 @@ Nothing is queued. Pick from **Later**. After a change to slicing, previewing, i
 
 - **Multi-model plates.** `--merge` segfaults in PrusaSlicer 2.9.7, so a plate of several files needs our own plate builder (trimesh) or a fixed PrusaSlicer. `copies` and `split` cover several copies of one model and several parts in one file. See ADR 0012.
 - **Open shells and other repairs.** `close_holes` caps only a flat, simple hole. Two CAD exports are open shells with 28 to 32 non-flat loops, and ten files have non-manifold edges but no open ones; `inspect_model` counts them and nothing repairs them. Needs a look at what PrusaSlicer does with them before choosing a remedy.
-- **Show the bed in previews.** Draw a ground line or plane at the model's lowest point so it is obvious which face rests on the bed.
 - **Preview improvements.** Stack the two silhouette panels for wide, low prints so they use the whole picture, draw `G2`/`G3` arcs, add a perspective or shaded layer-stack view, and speed up the G-code parse for very large files.
 - **Failed slices leave an empty output folder.** It is created before PrusaSlicer runs. Remove it when the slice fails and the server created it.
 - **Validate overrides earlier.** A bad key or value already fails with PrusaSlicer's own readable message (`Unknown option --fill-densty`, `Invalid value supplied for --fill-density`). What remains is failing before PrusaSlicer starts, and suggesting the closest valid key from `--help-fff`.
 
-- **Better orientation scores.** Overhang area ordered two of three statue orientations wrongly against real support filament (ADR 0018). Try the actual support volume from a slice, bridging, and a candidate at an arbitrary angle for curved models; recheck the 10% tie rule on more models.
+- **Better orientation scores.** Geometry picked the measured winner on four of five models (ADR 0019); the miss was a pipe elbow whose as-stored orientation, flagged unstable, cost 9.5 g less. Recheck the 5% stability line and the 10% tie rule on more models, add bridging, and propose a candidate at an arbitrary angle for curved models.
 - **Orientation for projects.** `suggest_orientation` refuses a PrusaSlicer project because its own placement does not combine with the rotations as scored.
 
 ### Ideas
 
-- **Richer G-code analysis:** silent-mode time, first-layer time, time and filament per feature type, per-layer stats.
+- **Richer G-code analysis:** silent-mode time, first-layer time, time per feature type, per-layer stats. (Filament per feature type exists now, `gcode.filament_by_feature`.)
 - **Effective-settings introspection:** show the resolved value of a setting for a printer, print and filament combination, and explain what an override changed. Must not write into the user's PrusaSlicer data directory.
 - **Project details:** report a project's per-object settings and plate layout, and possibly write a project back. (Slicing a project as saved is done, ADR 0007.)
 - **Multi-material and multi-extruder slicing** (multiple filament profiles, tool changes). Needs a check of how the 2.9.x CLI takes several `--material-profile` values.
