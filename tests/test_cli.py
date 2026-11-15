@@ -5,12 +5,17 @@ for real without needing PrusaSlicer installed.
 """
 
 import os
+import sys
 import time
 
 import pytest
 
 from prusaslicer_mcp import cli
 from prusaslicer_mcp.config import Config
+
+# The fake PrusaSlicer is a #!/bin/sh script, which Windows cannot run. The real process handling is covered by the
+# integration tests there.
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="the fake slicer is a POSIX shell script")
 
 
 @pytest.fixture

@@ -247,6 +247,21 @@ def test_an_arc_given_by_radius_is_counted_but_not_drawn(write):
     assert scan.x_range == (0, 10)
 
 
+def test_windows_line_endings_do_not_disturb_reading_moves(write):
+    # Given a layer written with CRLF line endings, as a Windows machine might write it
+    text = (
+        "M83\n" + layer(0.2, ("External perimeter", square(10, 10, 5))) + layer(0.4, ("Perimeter", [(0, 0, 5, 0)]))
+    ).replace("\n", "\r\n")
+
+    # When the file is scanned
+    scan = scan_gcode(write(text))
+
+    # Then layers, heights, features and extent come out exactly as for LF endings
+    assert scan.layer_heights == [0.2, 0.4]
+    assert scan.features == ["External perimeter", "Perimeter"]
+    assert scan.x_range == (0, 15)
+
+
 # --------------------------------------------------------------------------- scanning a whole file
 
 

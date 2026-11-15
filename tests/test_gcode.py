@@ -541,6 +541,18 @@ def test_travel_moves_and_retractions_are_not_extrusion(tmp_path):
     assert totals == {"Perimeter": pytest.approx(2.0)}
 
 
+def test_windows_line_endings_do_not_disturb_the_filament_count(tmp_path):
+    # Given a print written with CRLF line endings, with a feature name that would keep a stray \r
+    path = tmp_path / "crlf.gcode"
+    path.write_bytes(b"M83\r\n;TYPE:Perimeter\r\nG1 X10 Y0 E2.5\r\n;TYPE:Support material\r\nG1 X20 Y0 E1.0\r\n")
+
+    # When the filament is counted per feature
+    totals = filament_by_feature(path)
+
+    # Then the names are clean and the amounts right
+    assert totals == {"Perimeter": 2.5, "Support material": 1.0}
+
+
 def test_arcs_are_counted_as_extrusion(tmp_path):
     # Given a print whose perimeter is an arc (arc fitting writes G2 and G3)
     text = "M83\n;TYPE:External perimeter\nG2 X10 Y0 I5 J0 E3.0\nG3 X0 Y0 I-5 J0 E3.0\n"

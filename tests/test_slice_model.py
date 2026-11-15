@@ -7,6 +7,7 @@ failure reporting are the real code under test.
 import io
 import json
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -479,6 +480,7 @@ async def test_an_output_folder_that_is_a_file_is_refused(fake_prusaslicer, mode
 
 
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores folder permissions")
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod does not make a Windows folder read-only")
 async def test_a_folder_that_cannot_be_created_is_a_readable_failure(fake_prusaslicer, model):
     # Given a read-only folder, so creating a folder inside it is not allowed
     locked = fake_prusaslicer.tmp / "locked"
