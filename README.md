@@ -105,6 +105,7 @@ uv run poe check             # lint, format check, type check, unit tests (what 
 uv run poe fix               # apply safe lint fixes, then format
 uv run poe test-integration  # tests that need a real PrusaSlicer (skip when absent)
 uv run poe                   # list every task
+uv run poe dogfood run <folder>   # run every tool over a folder of real models and report (opt-in; docs/dogfooding.md)
 ```
 
 `uv format`, `uv check` and `uv audit` are uv's own formatter, type checker (ty, pinned) and dependency audit.
