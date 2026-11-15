@@ -1,0 +1,13 @@
+# Actions are pinned to commit SHAs (a tag can be moved; a SHA cannot), so something has to move them forward.
+# Dependabot opens one grouped pull request a week and keeps the `# vX.Y.Z` comment next to each SHA current.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
