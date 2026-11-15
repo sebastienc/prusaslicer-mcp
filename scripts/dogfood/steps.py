@@ -17,7 +17,7 @@ from prusaslicer_mcp.project import read_project
 if TYPE_CHECKING:
     from pathlib import Path
 
-STEPS = ("inspect", "preview_model", "slice")
+STEPS = ("inspect", "preview_model", "orientation", "slice")
 _PICTURE_SIZE = 640
 _NOTE_LIMIT = 400
 
@@ -86,6 +86,29 @@ def _preview_model(path: Path, out_dir: Path) -> dict[str, Any]:
     return {}
 
 
+def _orientation(path: Path) -> dict[str, Any]:
+    """Score the orientations of a plain model. A project keeps its own placement, so it is skipped."""
+    if read_project(path):
+        return {"skipped": "PrusaSlicer project"}
+    advice = asyncio.run(server.suggest_orientation(str(path), 5, False))
+    best = advice.options[0]
+    stored = next(option for option in advice.options if option.as_stored)
+    return {
+        "best_is_stored": best.as_stored,
+        "stored_rank": stored.rank,
+        "stored_stable": stored.stable,
+        "any_stable": any(option.stable for option in advice.options),
+        "best": {
+            "rotate_x": best.rotate_x,
+            "rotate_y": best.rotate_y,
+            "height_mm": best.height_mm,
+            "base_share": best.base_share,
+            "overhang_share": best.overhang_share,
+        },
+        "warnings": [warning[:_NOTE_LIMIT] for warning in advice.warnings],
+    }
+
+
 def _slice(path: Path, setup: Setup, out_dir: Path) -> dict[str, Any]:
     gcode = out_dir / "print.gcode"
     gcode.unlink(missing_ok=True)
@@ -132,6 +155,8 @@ def run_step(step: str, path: Path, setup: Setup, out_dir: Path) -> dict[str, An
             row.update(_inspect(path, setup))
         elif step == "preview_model":
             row.update(_preview_model(path, out_dir))
+        elif step == "orientation":
+            row.update(_orientation(path))
         elif step == "slice":
             row.update(_slice(path, setup, out_dir))
         else:

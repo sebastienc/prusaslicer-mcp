@@ -99,10 +99,10 @@ def test_running_the_sweep_over_real_models_records_every_step(tmp_path, capsys,
     # When the sweep is run over it
     code = sweep.main(["run", str(library), "--out", str(out), "--workers", "1"])
 
-    # Then all three steps of all three files succeeded, with their pictures, and nothing crashed
+    # Then all four steps of all three files succeeded, with their pictures, and nothing crashed
     assert code == 0
     rows = [json.loads(line) for line in (out / "results.jsonl").read_text().splitlines()]
-    assert len(rows) == 9
+    assert len(rows) == 12
     assert all(row["ok"] for row in rows), [r for r in rows if not r["ok"]]
     assert sorted(p.name for p in out.glob("*/model.png")) == ["model.png"] * 3
     assert sorted(p.name for p in out.glob("*/print.png")) == ["print.png"] * 3
@@ -110,6 +110,28 @@ def test_running_the_sweep_over_real_models_records_every_step(tmp_path, capsys,
     summary = capsys.readouterr().out
     assert "3 files" in summary
     assert "no crashes or timeouts" in summary
+
+
+def test_the_orientation_step_scores_plain_models_and_skips_projects(tmp_path, prusaslicer, make_3mf):
+    # Given a folder with an STL and a PrusaSlicer project
+    library = tmp_path / "library"
+    library.mkdir()
+    trimesh.creation.box(extents=(20, 20, 30)).export(library / "box.stl")
+    make_3mf(name="project.3mf", config=PROJECT_CONFIG).rename(library / "project.3mf")
+    out = tmp_path / "out"
+
+    # When the sweep is run over it
+    sweep.main(["run", str(library), "--out", str(out), "--workers", "1"])
+
+    # Then the STL has an orientation verdict and the project is recorded as skipped
+    rows = {
+        json.loads(line)["path"]: json.loads(line)
+        for line in (out / "results.jsonl").read_text().splitlines()
+        if json.loads(line)["step"] == "orientation"
+    }
+    assert rows["box.stl"]["ok"] is True
+    assert rows["box.stl"]["best"]["base_share"] == pytest.approx(1.0)
+    assert rows["project.3mf"]["skipped"] == "PrusaSlicer project"
 
 
 def test_the_sweep_uses_a_projects_own_settings_and_centres_a_plain_3mf(tmp_path, prusaslicer, make_3mf):

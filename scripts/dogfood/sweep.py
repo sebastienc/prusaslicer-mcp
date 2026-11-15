@@ -23,7 +23,7 @@ from typing import Any
 from dogfood import report, steps
 
 MODEL_SUFFIXES = {".stl", ".3mf", ".obj", ".step", ".stp", ".amf"}
-TIMEOUTS = {"inspect": 240, "preview_model": 240, "slice": 900}  # seconds, per step
+TIMEOUTS = {"inspect": 240, "preview_model": 240, "orientation": 240, "slice": 900}  # seconds, per step
 DEFAULT_OUT = Path("output/dogfood")
 _SCRIPTS = Path(__file__).resolve().parents[1]
 
