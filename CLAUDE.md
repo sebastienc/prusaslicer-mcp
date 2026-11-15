@@ -1,8 +1,8 @@
 # prusaslicer-mcp
 
 MCP server (Python, stdio) that lets Claude drive the **PrusaSlicer 2.9.x command line**: list
-printers/profiles, check a model, slice headlessly with the user's real profiles, return print stats.
-It does not control the GUI. Private repo, MIT.
+printers/profiles, check and preview a model, suggest which way up to print it, slice headlessly with the
+user's real profiles, return print stats. It does not control the GUI. Private repo, MIT.
 
 ## Where things are
 
@@ -34,6 +34,7 @@ Do not run `direnv allow` for the user.
 - MCP SDK is **2.x** (`from mcp.server.mcpserver import MCPServer`), not the v1 `FastMCP` API.
 - PrusaSlicer's `--query-*` actions **exit 1 on success**; check the output file instead.
 - Profile names must match exactly; slice with `--binary-gcode=0`; no shell, ever.
+- **A slice that succeeds is not proof that it prints.** Look at the first layers (filament per layer), not only at the exit code (ADR 0017). Prefer asking PrusaSlicer to do a transform over redoing it (ADR 0015).
 
 ## Working here
 

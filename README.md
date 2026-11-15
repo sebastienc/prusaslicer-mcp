@@ -1,14 +1,14 @@
 # prusaslicer-mcp
 
 An [MCP](https://modelcontextprotocol.io) server that lets Claude (or any MCP client) drive the
-**PrusaSlicer 2.9.x command line**: discover installed printers and profiles, sanity-check a model,
-slice it headlessly with your real presets, and get print time and filament use back.
+**PrusaSlicer 2.9.x command line**: discover installed printers and profiles, sanity-check and look at a model,
+work out which way up to print it, slice it headlessly with your real presets, and get print time and filament use back.
 
 It runs PrusaSlicer as a separate process, so it works while the GUI is open and does not touch it.
 It does **not** control the GUI itself (PrusaSlicer 2.9.x has no remote-control API), and it targets
 **2.9.x only**; PrusaSlicer 3.x is not supported yet.
 
-**Status:** v0.1.0, early. Four tools, tested against PrusaSlicer 2.9.7 on macOS. See the [roadmap](ROADMAP.md).
+**Status:** early. Seven tools, tested against PrusaSlicer 2.9.7 on macOS. See the [roadmap](ROADMAP.md).
 
 ## Example
 
@@ -19,6 +19,12 @@ Once registered with an MCP client, you can ask things like:
 
 Behind that, the client calls `list_printers` → `list_profiles` → `inspect_model` → `slice_model` and
 reads back the print time and filament use. `preview_model` and `preview_gcode` let it *look* at the model and at what was sliced, and `suggest_orientation` proposes which way up to print.
+
+A scan that will not slice is a different conversation:
+
+> "`~/scans/statue.stl` won't slice. What's wrong with it, and which way up should I print it?"
+
+Behind that: `inspect_model` reports an open base, `suggest_orientation` with `close_holes` finds the orientation that stands the capped base flat on the bed (and, given your profiles, measures what the supports would cost in each), `preview_model` shows it before anything is sliced, and `slice_model` prints it.
 
 ## Tools
 
