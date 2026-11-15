@@ -5,7 +5,7 @@ import pytest
 import trimesh
 from PIL import Image
 
-from prusaslicer_mcp.preview_model import BACKGROUND, render_model, to_png
+from prusaslicer_mcp.preview_model import BACKGROUND, BED_FILL, BED_LINE, render_model, to_png
 
 SIZE = 400
 
@@ -241,3 +241,195 @@ def test_to_png_produces_a_png_file():
 
     # Then it starts with the PNG signature
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+# --------------------------------------------------------------------------- the bed
+
+
+def colour_mask(image: Image.Image, colour: tuple[int, int, int]) -> np.ndarray:
+    return np.all(np.asarray(image) == np.array(colour, dtype=np.uint8), axis=2)
+
+
+def model_mask(image: Image.Image) -> np.ndarray:
+    """Pixels that belong to the model: not background and not the bed."""
+    pixels = np.asarray(image)
+    other = np.zeros(pixels.shape[:2], dtype=bool)
+    for colour in (BACKGROUND, BED_FILL, BED_LINE):
+        other |= np.all(pixels == np.array(colour, dtype=np.uint8), axis=2)
+    return ~other
+
+
+def test_no_bed_is_drawn_unless_asked_for():
+    # Given a box
+
+    # When it is rendered with the default options
+    image = render_model(box(), "iso", SIZE)
+
+    # Then there are no bed pixels
+    assert not colour_mask(image, BED_FILL).any()
+    assert not colour_mask(image, BED_LINE).any()
+
+
+def test_the_bed_is_a_line_under_the_model_in_a_side_view_and_wider_than_it():
+    # Given a box seen from the front
+    mesh = box(20, 10, 30)
+
+    # When it is rendered with the bed
+    image = render_model(mesh, "front", SIZE, bed=True)
+
+    # Then the bed is one row of line colour at the model's lowest row, reaching past both sides of the model
+    rows = np.flatnonzero(colour_mask(image, BED_LINE).any(axis=1))
+    mask = model_mask(image)
+    ys, xs = np.nonzero(mask)
+    assert abs(int(rows.min()) - int(ys.max())) <= 2
+    line_columns = np.flatnonzero(colour_mask(image, BED_LINE)[rows].any(axis=0))
+    assert line_columns.min() < xs.min() - 3
+    assert line_columns.max() > xs.max() + 3
+
+
+def test_the_bed_is_at_the_models_lowest_point_wherever_the_model_is_stored():
+    # Given a model stored 330 mm below the origin
+    mesh = box(20, 10, 30, at=(-90.0, -60.0, -330.0))
+
+    # When it is rendered from the front with the bed
+    image = render_model(mesh, "front", SIZE, bed=True)
+
+    # Then the bed line is still at the model's lowest row
+    rows = np.flatnonzero(colour_mask(image, BED_LINE).any(axis=1))
+    ys, _ = np.nonzero(model_mask(image))
+    assert abs(int(rows.min()) - int(ys.max())) <= 2
+
+
+def test_the_bed_never_changes_how_the_model_itself_is_drawn():
+    # Given a model drawn without and with the bed in the iso view
+    mesh = combine(box(30, 10, 10), box(10, 10, 10, at=(0, 0, 10)))
+    plain = render_model(mesh, "iso", SIZE)
+    with_bed = render_model(mesh, "iso", SIZE, bed=True)
+
+    # When the pixels that belong to the model are compared
+    where = model_mask(plain)
+
+    # Then they are the same, and the bed is only in what the model leaves free
+    assert np.array_equal(np.asarray(plain)[where], np.asarray(with_bed)[where])
+    assert colour_mask(with_bed, BED_FILL).any()
+    assert not (colour_mask(with_bed, BED_FILL) & where).any()
+
+
+def test_the_bed_is_drawn_behind_the_model_not_over_it():
+    # Given a wide flat box, whose top face hides most of the bed in the iso view
+    mesh = box(60, 60, 4)
+
+    # When it is rendered with the bed
+    image = render_model(mesh, "iso", SIZE, bed=True)
+
+    # Then the middle of the picture, where the model is, is model colour and not bed
+    centre = np.asarray(image)[SIZE // 2, SIZE // 2]
+    assert tuple(centre) not in (BACKGROUND, BED_FILL, BED_LINE)
+
+
+def test_the_bed_reaches_past_the_models_footprint_in_the_top_view():
+    # Given a box seen from above
+    mesh = box(20, 10, 30)
+
+    # When it is rendered with the bed
+    image = render_model(mesh, "top", SIZE, bed=True)
+
+    # Then the bed's outline surrounds the model on every side
+    ys, xs = np.nonzero(model_mask(image))
+    bed_ys, bed_xs = np.nonzero(colour_mask(image, BED_LINE) | colour_mask(image, BED_FILL))
+    assert bed_xs.min() < xs.min()
+    assert bed_xs.max() > xs.max()
+    assert bed_ys.min() < ys.min()
+    assert bed_ys.max() > ys.max()
+
+
+def test_a_bed_larger_than_the_picture_is_cut_off_without_smearing_the_edge():
+    # Given a long thin model whose bed spills out of the picture in the front view
+    mesh = box(200, 4, 4)
+
+    # When it is rendered with the bed
+    image = render_model(mesh, "front", SIZE, bed=True)
+
+    # Then the picture is the right size and its top and bottom rows are untouched (no clamped points)
+    assert image.size == (SIZE, SIZE)
+    pixels = np.asarray(image)
+    assert (pixels[0] == np.array(BACKGROUND)).all()
+    assert (pixels[-1] == np.array(BACKGROUND)).all()
+
+
+def test_every_view_of_the_sheet_has_its_bed():
+    # Given a box rendered as a sheet with the bed
+    image = render_model(box(), "sheet", SIZE, bed=True)
+
+    # When each quarter is looked at
+    half = SIZE // 2
+    quarters = [np.asarray(image)[y : y + half, x : x + half] for y in (0, half) for x in (0, half)]
+
+    # Then each has bed pixels
+    for quarter in quarters:
+        has_bed = np.all(quarter == np.array(BED_LINE, dtype=np.uint8), axis=2).any()
+        assert has_bed
+
+
+def test_a_very_large_model_still_gets_a_readable_grid():
+    # Given a model 4 m across, which would need 400 grid lines at 10 mm
+    mesh = box(4000, 4000, 10)
+
+    # When it is rendered from above with the bed
+    image = render_model(mesh, "top", SIZE, bed=True)
+
+    # Then it renders (the grid spacing grows with the model) and has bed pixels
+    assert colour_mask(image, BED_LINE).any()
+
+
+def test_the_picture_with_the_bed_is_still_deterministic():
+    # Given a model
+    mesh = box()
+
+    # When it is rendered twice with the bed
+    first = to_png(render_model(mesh, "iso", SIZE, bed=True))
+    second = to_png(render_model(mesh, "iso", SIZE, bed=True))
+
+    # Then the pictures are identical
+    assert first == second
+
+
+def bed_from_above(extent_mm: float = 100.0, size: int = 400) -> np.ndarray:
+    """The bed layer for a flat square model seen from straight above."""
+    from prusaslicer_mcp import preview_model
+
+    vertices = box(extent_mm, extent_mm, 2).vertices
+    rotation = preview_model._rotation(*preview_model.VIEWS["top"])
+    return np.asarray(preview_model._bed_layer(vertices, rotation, scale=size * 0.9 / extent_mm / 1.3, size=size))
+
+
+def test_the_bed_has_a_grid_across_it_in_both_directions():
+    # Given the bed under a 100 mm square model, seen from above
+    layer = bed_from_above()
+
+    # When the full lines across the bed are counted
+    drawn = np.any(layer != np.array(BACKGROUND, dtype=np.uint8), axis=2)
+    ys, xs = np.nonzero(drawn)
+    line = np.all(layer == np.array(BED_LINE, dtype=np.uint8), axis=2)[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
+    vertical = int((line.mean(axis=0) > 0.9).sum())
+    horizontal = int((line.mean(axis=1) > 0.9).sum())
+
+    # Then there are lines every 10 mm both ways: about 12 inside the ~124 mm bed, plus its two edges
+    assert vertical >= 12
+    assert horizontal >= 12
+
+
+def test_the_bed_has_a_solid_outline_round_its_fill():
+    # Given the bed under a square model, seen from above
+    layer = bed_from_above()
+
+    # When the extent of everything drawn as bed is found
+    bed = np.any(layer != np.array(BACKGROUND, dtype=np.uint8), axis=2)
+    ys, xs = np.nonzero(bed)
+    line = np.all(layer == np.array(BED_LINE, dtype=np.uint8), axis=2)
+
+    # Then its four outermost rows and columns are line colour, not fill
+    assert line[ys.min(), xs.min() : xs.max() + 1].mean() > 0.95
+    assert line[ys.max(), xs.min() : xs.max() + 1].mean() > 0.95
+    assert line[ys.min() : ys.max() + 1, xs.min()].mean() > 0.95
+    assert line[ys.min() : ys.max() + 1, xs.max()].mean() > 0.95

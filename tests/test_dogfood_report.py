@@ -8,7 +8,7 @@ from dogfood import report
 from PIL import Image
 
 from prusaslicer_mcp.preview_gcode import INK
-from prusaslicer_mcp.preview_model import BACKGROUND
+from prusaslicer_mcp.preview_model import BACKGROUND, BED_FILL, BED_LINE
 
 
 def inspect_row(i, path="a.stl", size=(20, 20, 30), watertight=True, parts=1, fits=True, warnings=(), project=None):
@@ -288,3 +288,27 @@ def test_an_orientation_step_that_failed_is_not_counted_as_scored_and_does_not_b
 
     # Then only the scored file counts (the crash is reported by the step outcomes, not here)
     assert counts["scored"] == 1
+
+
+def test_a_picture_with_only_the_bed_in_it_counts_as_empty(tmp_path):
+    # Given two model sheets: one drawn with real content, and one where only the bed was drawn (the model is missing)
+    def sheet(folder, model_rows):
+        pixels = np.empty((100, 100, 3), np.uint8)
+        pixels[:] = BACKGROUND
+        pixels[60:, :] = BED_FILL  # the bed takes up the lower part of every picture
+        pixels[59, :] = BED_LINE
+        pixels[:model_rows, 20:80] = (10, 10, 10)
+        folder.mkdir()
+        Image.fromarray(pixels).save(folder / "model.png")
+
+    sheet(tmp_path / "000", 50)
+    sheet(tmp_path / "001", 0)
+    rows = [inspect_row(0, path="real.stl"), inspect_row(1, path="bedonly.stl")]
+
+    # When the emptiest pictures are found
+    outliers = report.image_outliers(tmp_path, rows, count=1)
+
+    # Then the bed does not count as content: the bed-only picture is the emptiest, with nothing in it
+    name, fill = outliers["emptiest model sheets"][0]
+    assert name == "bedonly.stl"
+    assert fill == 0.0

@@ -12,7 +12,7 @@ from mcp.types import CallToolResult, ImageContent, TextContent
 from PIL import Image
 
 from prusaslicer_mcp import server
-from prusaslicer_mcp.preview_model import ALL_VIEWS
+from prusaslicer_mcp.preview_model import ALL_VIEWS, BACKGROUND, BED_FILL, BED_LINE
 
 
 async def preview(**arguments) -> CallToolResult:
@@ -172,9 +172,11 @@ def bar_stl(tmp_path):
 
 
 def silhouette_aspect(picture: Image.Image) -> float:
-    """Width over height of everything drawn that is not the light background."""
+    """Width over height of the model: everything drawn that is neither the light background nor the bed."""
     pixels = np.asarray(picture)
-    drawn = np.any(pixels != pixels[0, 0], axis=2)
+    drawn = np.ones(pixels.shape[:2], dtype=bool)
+    for colour in (BACKGROUND, BED_FILL, BED_LINE):
+        drawn &= ~(pixels == np.array(colour, dtype=np.uint8)).all(axis=2)
     ys, xs = np.nonzero(drawn)
     return (xs.max() - xs.min() + 1) / (ys.max() - ys.min() + 1)
 
@@ -202,3 +204,16 @@ async def test_the_requested_view_is_the_one_drawn(bar_stl, view, width_mm, heig
 
     # Then the silhouette has the proportions of the axes that view should show
     assert silhouette_aspect(picture) == pytest.approx(width_mm / height_mm, rel=0.04)
+
+
+async def test_the_picture_shows_the_bed_and_the_caption_says_what_it_is(cube_stl):
+    # Given a cube
+    arguments = {"model_path": str(cube_stl), "view": "front"}
+
+    # When a client asks for a preview
+    result = await preview(**arguments)
+
+    # Then the picture has the bed's outline in it and the caption explains the grey plane
+    pixels = np.asarray(decode(result).convert("RGB"))
+    assert (pixels == np.array(BED_LINE, dtype=np.uint8)).all(axis=2).any()
+    assert "bed" in caption(result)
