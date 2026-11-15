@@ -1,6 +1,6 @@
 [project]
 name = "prusaslicer-mcp"
-version = "0.1.1"
+version = "0.2.0"
 description = "MCP server that lets Claude drive the PrusaSlicer 2.9.x CLI"
 readme = "README.md"
 authors = [
